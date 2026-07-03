@@ -110,13 +110,19 @@ let planes = [], popups = [], explosions = [], clouds = [], runways = [];
 let tcasPairs = [];
 let score = 0, stageLanded = 0, totalLanded = 0, elapsed = 0, spawnT = 1.0, crashT = 0;
 let rushT = 45, burstLeft = 0, burstT = 0, banner = null;
+let activeScene = 'day', rain = [];
+let emergT = 40, comboN = 0, lastLandT = -99;
 let best = +(localStorage.getItem('atc-best') || 0);
 let active = null;
 let shake = 0, flash = 0, lastBeep = -9;
 let field = null;
 
 // config (persisted)
-let cfg = { apt: 'SFO', mode: 'endless', target: 200, tcas: true, practice: false, pace: 'normal', cb: false, bigTouch: false };
+let cfg = {
+  apt: 'SFO', mode: 'endless', target: 200, tcas: true, practice: false,
+  pace: 'normal', cb: false, bigTouch: false,
+  scene: 'day', emerg: true, assist: false, combo: true,
+};
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('atc-cfg') || '{}')); } catch (e) {}
 let airport = null;
 let airportIdx = Math.max(0, AIRPORT_ORDER.indexOf(cfg.apt));
@@ -237,6 +243,22 @@ function drawWater(g) {
   g.restore();
 }
 
+function resolveScene() {
+  activeScene = cfg.scene === 'random'
+    ? ['day', 'night', 'rain'][Math.random() * 3 | 0]
+    : cfg.scene;
+  makeRain();
+  renderField();
+}
+
+function makeRain() {
+  rain = [];
+  if (activeScene !== 'rain') return;
+  for (let i = 0; i < 130; i++) {
+    rain.push({ x: rand(-40, W + 40), y: rand(-20, H), len: rand(9, 18), spd: rand(380, 560) });
+  }
+}
+
 function makeClouds() {
   clouds = [];
   for (let i = 0; i < 4; i++) {
@@ -322,6 +344,16 @@ function renderField() {
     else drawPad(g, rw);
   }
 
+  // scene tinting on the cached ground layer
+  if (activeScene === 'night') {
+    g.fillStyle = 'rgba(13, 17, 44, 0.55)';
+    g.fillRect(0, 0, W, H);
+    drawNightLights(g);
+  } else if (activeScene === 'rain') {
+    g.fillStyle = 'rgba(70, 82, 104, 0.22)';
+    g.fillRect(0, 0, W, H);
+  }
+
   // airport name plate
   g.save();
   g.font = '900 15px system-ui';
@@ -332,6 +364,43 @@ function renderField() {
   g.fillStyle = 'rgba(255,255,255,0.7)';
   g.fillText(`${airport.code} · ${airport.name.toUpperCase()}`, 14, H - 16);
   g.restore();
+}
+
+function drawNightLights(g) {
+  for (const rw of runways) {
+    if (rw.kind === 'strip') {
+      g.save();
+      g.translate(rw.x, rw.y);
+      g.rotate(rw.angle);
+      // edge lights down both sides
+      g.fillStyle = '#ffe9a8';
+      for (let x = -rw.len / 2 + 10; x <= rw.len / 2 - 10; x += 26) {
+        for (const side of [-1, 1]) {
+          g.beginPath();
+          g.arc(x, side * (rw.wid / 2 + 2.5), 1.7, 0, TAU);
+          g.fill();
+        }
+      }
+      // green threshold lights at both ends
+      g.fillStyle = '#5aff7e';
+      for (const end of [-1, 1]) {
+        for (let i = -2; i <= 2; i++) {
+          g.beginPath();
+          g.arc(end * (rw.len / 2 + 3), i * (rw.wid / 5), 1.7, 0, TAU);
+          g.fill();
+        }
+      }
+      g.restore();
+    } else {
+      g.fillStyle = '#8fd4ff';
+      for (let i = 0; i < 8; i++) {
+        const a = i / 8 * TAU;
+        g.beginPath();
+        g.arc(rw.x + Math.cos(a) * (rw.r + 4), rw.y + Math.sin(a) * (rw.r + 4), 1.8, 0, TAU);
+        g.fill();
+      }
+    }
+  }
 }
 
 function drawStrip(g, rw) {
@@ -443,6 +512,7 @@ function spawnInterval() {
 
 function effSpeed(p) {
   let sp = p.speed * (p.spdMod || 1) * (cfg.pace === 'relaxed' ? 0.8 : 1);
+  if (p.assist > 0) sp *= 0.5; // TCAS auto-avoid resolution
   if (p.landing && p.landing.kind === 'strip' && p.path.length <= 1) {
     sp *= 1 - 0.45 * p.landProgress;
   }
@@ -488,11 +558,26 @@ function collidable(p) {
 
 function finishLanding(p) {
   p.done = true;
-  const pts = PTS[p.type];
+  let pts = PTS[p.type];
+  let label = '';
+  if (p.emergency) {
+    pts *= 2;
+    label = ' ⛽×2';
+  }
+  if (cfg.combo) {
+    comboN = (elapsed - lastLandT < 6) ? comboN + 1 : 1;
+    lastLandT = elapsed;
+    const mult = Math.min(comboN, 5);
+    if (mult > 1) {
+      pts *= mult;
+      label += ` 🔥×${mult}`;
+      if (mult >= 3) banner = { text: `COMBO ×${mult}!`, age: 0 };
+    }
+  }
   score += pts;
   stageLanded++;
   totalLanded++;
-  popups.push({ x: p.x, y: p.y - 18, text: '+' + pts, age: 0, color: COLORS[p.type] });
+  popups.push({ x: p.x, y: p.y - 18, text: '+' + pts + label, age: 0, color: COLORS[p.type] });
   SFX.chime();
   updateHud();
   if (cfg.mode === 'stages' && stageLanded >= cfg.target && state === 'play') stageClear();
@@ -501,6 +586,36 @@ function finishLanding(p) {
 function updatePlane(p, dt) {
   p.age += dt;
   if (p.done) return;
+
+  if (p.assist > 0) p.assist -= dt;
+  else p._assistOn = false;
+
+  if (p.emergency) {
+    p.emergency.t -= dt;
+    if (p.emergency.t <= 0) {
+      // fuel exhausted — the aircraft goes down
+      p.done = true;
+      const parts = [];
+      for (let i = 0; i < 22; i++) {
+        const ang = rand(0, TAU), v = rand(30, 170);
+        parts.push({ x: p.x, y: p.y, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, r: rand(2, 5), hue: rand(12, 45) });
+      }
+      explosions.push({ x: p.x, y: p.y, age: 0, parts });
+      SFX.crash();
+      shake = 0.6;
+      flash = 0.5;
+      comboN = 0;
+      if (cfg.practice) {
+        score = Math.max(0, score - 300);
+        popups.push({ x: p.x, y: p.y - 34, text: '-300 FUEL OUT', age: 0 });
+        updateHud();
+      } else {
+        state = 'crash';
+        crashT = 1.5;
+      }
+      return;
+    }
+  }
 
   if (p.landing && p.landing.kind === 'strip' && p.path.length <= 1) {
     p.landProgress = clamp(1 - dist(p, p.landing.t1) / p.landing.len, 0, 1);
@@ -609,7 +724,18 @@ function checkConflicts() {
         tcasPairs.push({ a, b, level, px, py });
         raiseAlert(a, level);
         raiseAlert(b, level);
-        if (level === 'ra') anyRa = true; else anyTa = true;
+        if (level === 'ra') {
+          anyRa = true;
+          if (cfg.assist) {
+            // auto-avoid: TCAS slows the faster aircraft of the pair
+            const slow = effSpeed(a) >= effSpeed(b) ? a : b;
+            slow.assist = 0.8;
+            if (!slow._assistOn) {
+              slow._assistOn = true;
+              popups.push({ x: slow.x, y: slow.y - 24, text: 'TCAS ⬇ SLOW', age: 0.3 });
+            }
+          }
+        } else anyTa = true;
       }
     }
   }
@@ -629,6 +755,7 @@ function crashAt(a, b) {
   SFX.crash();
   shake = 0.6;
   flash = 0.5;
+  comboN = 0;
   if (cfg.practice) {
     const pen = 150;
     score = Math.max(0, score - pen);
@@ -711,13 +838,14 @@ function nextStage() {
   airportIdx = (airportIdx + 1) % AIRPORT_ORDER.length;
   airport = instantiateAirport(AIRPORT_ORDER[airportIdx]);
   layoutAirport();
-  renderField();
+  resolveScene();
   planes = []; popups = []; explosions = [];
   active = null;
   stageLanded = 0;
   spawnT = 0.8;
   lastBeep = -9;
   rushT = rand(35, 60); burstLeft = 0; banner = null;
+  emergT = rand(30, 55); comboN = 0; lastLandT = -99;
   $('stagec').classList.add('hidden');
   updateHud();
   state = 'play';
@@ -749,6 +877,24 @@ function update(dt) {
       burstT = 0.55;
     }
   }
+  // low-fuel emergencies
+  if (cfg.emerg) {
+    emergT -= dt;
+    if (emergT <= 0) {
+      emergT = rand(50, 85) * (cfg.pace === 'relaxed' ? 1.4 : 1);
+      const candidates = planes.filter(p =>
+        !p.done && !p.landing && !p.emergency &&
+        p.x > 0 && p.x < W && p.y > 0 && p.y < H);
+      if (candidates.length) {
+        const p = candidates[Math.random() * candidates.length | 0];
+        const fuel = cfg.pace === 'relaxed' ? 35 : 25;
+        p.emergency = { t: fuel, max: fuel };
+        popups.push({ x: p.x, y: p.y - 26, text: '⛽ LOW FUEL!', age: 0 });
+        banner = { text: '⛽ EMERGENCY — LAND IT NOW!', age: 0 };
+        SFX.emergency();
+      }
+    }
+  }
   for (const p of planes) updatePlane(p, dt);
   planes = planes.filter(p => !p.done);
   if (state === 'play' || state === 'crash') checkConflicts();
@@ -770,6 +916,11 @@ function updateFx(dt) {
     }
   }
   explosions = explosions.filter(e => e.age < 1.3);
+  for (const d of rain) {
+    d.y += d.spd * dt;
+    d.x += d.spd * 0.25 * dt;
+    if (d.y > H + 20) { d.y = -20; d.x = rand(-40, W + 40); }
+  }
   if (banner) {
     banner.age += dt;
     if (banner.age > 2.6) banner = null;
@@ -887,8 +1038,21 @@ function drawPlane(p, asShadow) {
   }
   ctx.rotate(p.dispHeading);
   ctx.scale(p.scale, p.scale);
+  if (!asShadow && activeScene === 'night') {
+    ctx.save();
+    ctx.globalAlpha = 0.13;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(0, 0, 22, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
   drawShape(ctx, p.type, p.age, asShadow ? '#000' : null);
   if (!asShadow) drawRotors(ctx, p);
+  if (!asShadow && activeScene === 'night' && (p.age % 1) < 0.55) {
+    ctx.fillStyle = '#ff5050';
+    ctx.beginPath(); ctx.arc(-7, -13, 1.8, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#4dff6a';
+    ctx.beginPath(); ctx.arc(-7, 13, 1.8, 0, TAU); ctx.fill();
+  }
   ctx.restore();
 
   if (!asShadow && cfg.cb && !p.done) {
@@ -946,7 +1110,31 @@ function drawTrail(p) {
   ctx.restore();
 }
 
+function drawEmergency(p) {
+  const frac = clamp(p.emergency.t / p.emergency.max, 0, 1);
+  const urgent = frac < 0.35;
+  const pulse = 1 + 0.1 * Math.sin(elapsed * (urgent ? 16 : 9));
+  ctx.save();
+  // fuel arc — drains clockwise as time runs out
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = urgent ? '#ff3b28' : '#ffb02e';
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 26 * pulse, -Math.PI / 2, -Math.PI / 2 + frac * TAU);
+  ctx.stroke();
+  ctx.globalAlpha = 0.35;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 26 * pulse, 0, TAU);
+  ctx.stroke();
+  ctx.globalAlpha = (elapsed % 0.8) < 0.5 ? 1 : 0.35;
+  ctx.font = '900 15px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⛽', p.x, p.y - 38);
+  ctx.restore();
+}
+
 function drawAlert(p) {
+  if (p.emergency) return; // the fuel ring takes visual priority
   const ra = p.alert === 'ra';
   const col = ra ? '255,50,30' : '255,176,46';
   const pulse = 1 + 0.08 * Math.sin(elapsed * (ra ? 16 : 10));
@@ -1134,6 +1322,20 @@ function drawPopup(pop) {
   ctx.restore();
 }
 
+function drawRain() {
+  if (activeScene !== 'rain' || !rain.length) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(200, 220, 245, 0.4)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (const d of rain) {
+    ctx.moveTo(d.x, d.y);
+    ctx.lineTo(d.x + d.len * 0.25, d.y + d.len);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawClouds() {
   ctx.save();
   for (const c of clouds) {
@@ -1172,6 +1374,7 @@ function render() {
     for (const p of planes) drawPlane(p, true);
     for (const p of planes) drawPlane(p, false);
     for (const p of planes) if (p.alert) drawAlert(p);
+    for (const p of planes) if (p.emergency && !p.done) drawEmergency(p);
     if (active) {
       ctx.save();
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
@@ -1185,6 +1388,7 @@ function render() {
   }
 
   drawClouds();
+  drawRain();
   drawWindsock();
   if (inPlay) drawBanner();
 
@@ -1383,22 +1587,28 @@ const reflectPace = bindSelector('paceSel', 'pc', pc => {
   cfg.pace = pc;
   saveCfg();
 });
+const reflectScene = bindSelector('sceneSel', 'sc', sc => {
+  cfg.scene = sc;
+  saveCfg();
+  resolveScene(); // live preview behind the menu
+});
 
-$('cbBtn').addEventListener('click', () => {
-  cfg.cb = !cfg.cb;
-  $('cbBtn').classList.toggle('on', cfg.cb);
-  saveCfg();
-  renderField(); // runway markers live on the cached ground layer
-  SFX.init();
-  SFX.click();
-});
-$('touchBtn').addEventListener('click', () => {
-  cfg.bigTouch = !cfg.bigTouch;
-  $('touchBtn').classList.toggle('on', cfg.bigTouch);
-  saveCfg();
-  SFX.init();
-  SFX.click();
-});
+function bindToggle(id, key, onChange) {
+  $(id).addEventListener('click', () => {
+    cfg[key] = !cfg[key];
+    $(id).classList.toggle('on', cfg[key]);
+    saveCfg();
+    SFX.init();
+    SFX.click();
+    if (onChange) onChange();
+  });
+}
+bindToggle('emergBtn', 'emerg');
+bindToggle('assistBtn', 'assist');
+bindToggle('comboBtn', 'combo');
+
+bindToggle('cbBtn', 'cb', renderField); // runway markers live on the cached ground layer
+bindToggle('touchBtn', 'bigTouch');
 
 /* ---------------- flow control ---------------- */
 
@@ -1421,6 +1631,7 @@ function reset() {
   stage = 1;
   spawnT = 0.6; shake = 0; flash = 0; lastBeep = -9;
   rushT = rand(35, 60); burstLeft = 0; banner = null;
+  emergT = rand(30, 55); comboN = 0; lastLandT = -99;
   active = null;
   airportIdx = Math.max(0, AIRPORT_ORDER.indexOf(cfg.apt));
   updateHud();
@@ -1431,6 +1642,7 @@ function startGame() {
   SFX.resume();
   SFX.click();
   reset();
+  resolveScene();
   state = 'play';
   $('start').classList.add('hidden');
   $('over').classList.add('hidden');
@@ -1530,6 +1742,7 @@ function resize() {
   canvas.height = Math.ceil(H * DPR);
   layoutAirport();
   renderField();
+  makeRain();
   if (!clouds.length) makeClouds();
 }
 window.addEventListener('resize', resize);
@@ -1541,10 +1754,15 @@ reflectMode(cfg.mode);
 reflectTarget(cfg.target);
 reflectPractice(cfg.practice ? 'on' : 'off');
 reflectPace(cfg.pace);
+reflectScene(cfg.scene);
 $('cbBtn').classList.toggle('on', cfg.cb);
 $('touchBtn').classList.toggle('on', cfg.bigTouch);
+$('emergBtn').classList.toggle('on', cfg.emerg);
+$('assistBtn').classList.toggle('on', cfg.assist);
+$('comboBtn').classList.toggle('on', cfg.combo);
 refreshLocks();
 renderLB($('lbMenu'));
+resolveScene();
 $('aptName').textContent = airport.name + (cfg.apt === 'RND' ? ' (randomized)' : '');
 $('targetSel').classList.toggle('hidden', cfg.mode !== 'stages');
 $('tcasBtn').classList.toggle('on', cfg.tcas);
@@ -1582,6 +1800,9 @@ if (_qs.has('stages')) {
 if (_qs.has('practice')) cfg.practice = true;
 if (_qs.has('relaxed')) cfg.pace = 'relaxed';
 if (_qs.has('cb')) { cfg.cb = true; renderField(); }
+if (_qs.has('scene')) { cfg.scene = _qs.get('scene'); resolveScene(); }
+if (_qs.has('noemerg')) cfg.emerg = false;
+if (_qs.has('assist')) cfg.assist = true;
 if (_qs.has('play')) startGame();
 if (_qs.has('ff')) {
   const secs = +_qs.get('ff') || 10;

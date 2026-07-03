@@ -187,6 +187,16 @@ class SFXEngine {
     this._beep(987.77, t + 0.18, 0.5, 0.1, 'triangle');
   }
 
+  // low-fuel emergency declared — urgent two-tone klaxon
+  emergency() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._beep(920, t, 0.14, 0.11, 'square');
+    this._beep(690, t + 0.16, 0.14, 0.11, 'square');
+    this._beep(920, t + 0.34, 0.14, 0.11, 'square');
+    this._beep(690, t + 0.5, 0.18, 0.11, 'square');
+  }
+
   // rush hour klaxon — heads-up, traffic burst incoming
   rush() {
     if (!this.ctx) return;
