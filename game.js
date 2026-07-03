@@ -1710,9 +1710,11 @@ $('tcasBtn').addEventListener('click', () => {
   saveCfg();
   SFX.click();
 });
+const TIME_SCALES = [0.25, 0.5, 1, 2];
 $('speedBtn').addEventListener('click', () => {
-  timeScale = timeScale === 1 ? 2 : 1;
-  $('speedBtn').textContent = timeScale + '×';
+  const i = TIME_SCALES.indexOf(timeScale);
+  timeScale = TIME_SCALES[(i + 1) % TIME_SCALES.length];
+  $('speedBtn').textContent = (timeScale < 1 ? String(timeScale).slice(1) : timeScale) + '×';
   $('speedBtn').classList.toggle('on', timeScale !== 1);
   SFX.click();
 });
