@@ -187,6 +187,16 @@ class SFXEngine {
     this._beep(987.77, t + 0.18, 0.5, 0.1, 'triangle');
   }
 
+  // rush hour klaxon — heads-up, traffic burst incoming
+  rush() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._beep(1500, t, 0.04, 0.03, 'square'); // squelch
+    this._beep(690, t + 0.05, 0.1, 0.1, 'square');
+    this._beep(690, t + 0.2, 0.1, 0.1, 'square');
+    this._beep(980, t + 0.35, 0.16, 0.1, 'square');
+  }
+
   // stage clear fanfare
   fanfare() {
     if (!this.ctx) return;

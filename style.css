@@ -165,6 +165,11 @@ html, body {
   border-color: transparent;
   box-shadow: 0 3px 10px rgba(79,187,66,.4);
 }
+.cfg-row .sel.locked {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.cfg-row .sel.locked:hover { background: rgba(255,255,255,.07); }
 .apt-name {
   font-size: 12.5px;
   color: rgba(255,255,255,.55);

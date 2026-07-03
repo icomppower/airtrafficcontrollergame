@@ -99,7 +99,7 @@ function randomAirport() {
 
 function instantiateAirport(key) {
   const def = key === 'RND' ? randomAirport() : AIRPORTS[key];
-  return { key, ...def };
+  return { key, ...def, wind: { ang: rand(0, TAU), spd: rand(3, 9) } };
 }
 
 /* ---------------- state ---------------- */
@@ -109,13 +109,14 @@ let state = 'menu'; // menu | play | paused | crash | over | stagec
 let planes = [], popups = [], explosions = [], clouds = [], runways = [];
 let tcasPairs = [];
 let score = 0, stageLanded = 0, totalLanded = 0, elapsed = 0, spawnT = 1.0, crashT = 0;
+let rushT = 45, burstLeft = 0, burstT = 0, banner = null;
 let best = +(localStorage.getItem('atc-best') || 0);
 let active = null;
 let shake = 0, flash = 0, lastBeep = -9;
 let field = null;
 
 // config (persisted)
-let cfg = { apt: 'SFO', mode: 'endless', target: 200, tcas: true, practice: false };
+let cfg = { apt: 'SFO', mode: 'endless', target: 200, tcas: true, practice: false, pace: 'normal', cb: false, bigTouch: false };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('atc-cfg') || '{}')); } catch (e) {}
 let airport = null;
 let airportIdx = Math.max(0, AIRPORT_ORDER.indexOf(cfg.apt));
@@ -376,6 +377,7 @@ function drawStrip(g, rw) {
   g.rotate(Math.PI / 2);
   g.fillText(rw.num, 0, 0);
   g.restore();
+  if (cfg.cb) drawTypeBadge(g, rw.type, -L / 2 + 60, 0, 7, 0.85);
   g.restore();
 }
 
@@ -400,6 +402,7 @@ function drawPad(g, rw) {
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillText('H', rw.x, rw.y + 1);
+  if (cfg.cb) drawTypeBadge(g, 'heli', rw.x, rw.y - rw.r * 0.58, 4.5, 0.85);
 }
 
 /* ---------------- aircraft ---------------- */
@@ -426,18 +429,20 @@ function spawnPlane() {
     type, x, y, heading, dispHeading: heading,
     speed: SPEED[type], spdMod: 1,
     path: [], trail: [], trailT: 0,
-    scale: 1, alert: null, done: false,
+    scale: 1, alert: null, done: false, hold: false,
     landing: null, landProgress: 0, hover: 0, age: 0,
   });
   SFX.blip();
 }
 
 function spawnInterval() {
-  return Math.max(1.15, 5.0 - totalLanded * 0.09 - elapsed * 0.004 - (stage - 1) * 0.4);
+  let iv = 5.0 - totalLanded * 0.09 - elapsed * 0.004 - (stage - 1) * 0.4;
+  if (cfg.pace === 'relaxed') return Math.max(2.2, iv * 1.5 + 0.6);
+  return Math.max(1.15, iv);
 }
 
 function effSpeed(p) {
-  let sp = p.speed * (p.spdMod || 1);
+  let sp = p.speed * (p.spdMod || 1) * (cfg.pace === 'relaxed' ? 0.8 : 1);
   if (p.landing && p.landing.kind === 'strip' && p.path.length <= 1) {
     sp *= 1 - 0.45 * p.landProgress;
   }
@@ -523,11 +528,18 @@ function updatePlane(p, dt) {
     p.scale = Math.max(0.12, 1 - (p.hover / 0.9));
     if (p.hover >= 0.9) { finishLanding(p); return; }
   } else {
+    if (p.hold) p.heading += 1.15 * dt; // circle in the holding pattern
     p.x += Math.cos(p.heading) * sp * dt;
     p.y += Math.sin(p.heading) * sp * dt;
     const m = 50;
     if (p.x < -m) p.x = W + m; else if (p.x > W + m) p.x = -m;
     if (p.y < -m) p.y = H + m; else if (p.y > H + m) p.y = -m;
+  }
+
+  // wind drift — planes crab back onto their drawn paths, free flyers get pushed
+  if (!p.landing && airport.wind) {
+    p.x += Math.cos(airport.wind.ang) * airport.wind.spd * dt;
+    p.y += Math.sin(airport.wind.ang) * airport.wind.spd * dt;
   }
 
   p.dispHeading = lerpAngle(p.dispHeading, p.heading, Math.min(1, dt * 8));
@@ -586,9 +598,12 @@ function checkConflicts() {
       let px = (a.x + b.x) / 2, py = (a.y + b.y) / 2;
       if (d < WARN_D) level = 'ta';
       if (cfg.tcas) {
+        // relaxed pace gives earlier, more generous warnings
+        const raT = cfg.pace === 'relaxed' ? 12 : 9;
+        const taT = cfg.pace === 'relaxed' ? 18 : 14;
         const c = cpa(a, b);
-        if (c.d < 34 && c.t < 9) { level = 'ra'; px = c.px; py = c.py; }
-        else if (!level && c.d < WARN_D && c.t < 14) { level = 'ta'; px = c.px; py = c.py; }
+        if (c.d < 34 && c.t < raT) { level = 'ra'; px = c.px; py = c.py; }
+        else if (!level && c.d < WARN_D && c.t < taT) { level = 'ta'; px = c.px; py = c.py; }
       }
       if (level) {
         tcasPairs.push({ a, b, level, px, py });
@@ -680,6 +695,7 @@ function stageClear() {
   state = 'stagec';
   SFX.fanfare();
   SFX.setEngine(0);
+  markCleared(airport.key);
   const nextKey = AIRPORT_ORDER[(airportIdx + 1) % AIRPORT_ORDER.length];
   const nextName = nextKey === 'RND' ? 'Random field 🎲' : `${nextKey} — ${AIRPORTS[nextKey].name}`;
   $('stageNum').textContent = stage;
@@ -701,6 +717,7 @@ function nextStage() {
   stageLanded = 0;
   spawnT = 0.8;
   lastBeep = -9;
+  rushT = rand(35, 60); burstLeft = 0; banner = null;
   $('stagec').classList.add('hidden');
   updateHud();
   state = 'play';
@@ -714,6 +731,23 @@ function update(dt) {
   if (spawnT <= 0) {
     spawnPlane();
     spawnT = spawnInterval();
+  }
+  // rush hour — scripted traffic burst
+  rushT -= dt;
+  if (rushT <= 0) {
+    rushT = rand(45, 75) * (cfg.pace === 'relaxed' ? 1.5 : 1);
+    burstLeft = 3 + (Math.random() < 0.5 ? 1 : 0);
+    burstT = 0;
+    banner = { text: 'RUSH HOUR!', age: 0 };
+    SFX.rush();
+  }
+  if (burstLeft > 0) {
+    burstT -= dt;
+    if (burstT <= 0) {
+      spawnPlane();
+      burstLeft--;
+      burstT = 0.55;
+    }
   }
   for (const p of planes) updatePlane(p, dt);
   planes = planes.filter(p => !p.done);
@@ -736,11 +770,37 @@ function updateFx(dt) {
     }
   }
   explosions = explosions.filter(e => e.age < 1.3);
+  if (banner) {
+    banner.age += dt;
+    if (banner.age > 2.6) banner = null;
+  }
   shake = Math.max(0, shake - dt);
   flash = Math.max(0, flash - dt);
 }
 
 /* ---------------- rendering ---------------- */
+
+// colorblind-safe marker: jet = triangle, prop = square, heli = circle
+function drawTypeBadge(g, type, x, y, s, alpha) {
+  g.save();
+  g.translate(x, y);
+  g.globalAlpha = alpha == null ? 0.95 : alpha;
+  g.fillStyle = '#fff';
+  g.strokeStyle = 'rgba(0,0,0,0.55)';
+  g.lineWidth = 1.2;
+  g.beginPath();
+  if (type === 'jet') {
+    g.moveTo(0, -s); g.lineTo(s * 0.95, s * 0.75); g.lineTo(-s * 0.95, s * 0.75);
+    g.closePath();
+  } else if (type === 'prop') {
+    g.rect(-s * 0.8, -s * 0.8, s * 1.6, s * 1.6);
+  } else {
+    g.arc(0, 0, s * 0.85, 0, TAU);
+  }
+  g.fill();
+  g.stroke();
+  g.restore();
+}
 
 function drawShape(g, type, t, flat) {
   const c = flat || COLORS[type];
@@ -830,6 +890,10 @@ function drawPlane(p, asShadow) {
   drawShape(ctx, p.type, p.age, asShadow ? '#000' : null);
   if (!asShadow) drawRotors(ctx, p);
   ctx.restore();
+
+  if (!asShadow && cfg.cb && !p.done) {
+    drawTypeBadge(ctx, p.type, p.x, p.y, 4.5 * p.scale);
+  }
 
   // per-plane speed indicator
   if (!asShadow && p.spdMod !== 1 && !p.done) {
@@ -955,11 +1019,79 @@ function drawEdgeMarker(p) {
   ctx.strokeStyle = 'rgba(255,255,255,0.9)';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(0, 0, 10, 0, TAU); ctx.fill(); ctx.stroke();
+  if (cfg.cb) {
+    ctx.restore();
+    drawTypeBadge(ctx, p.type, cx, cy, 5);
+    return;
+  }
   ctx.rotate(ang);
   ctx.fillStyle = '#fff';
   ctx.beginPath();
   ctx.moveTo(7.5, 0); ctx.lineTo(1.5, -4); ctx.lineTo(1.5, 4);
   ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawHoldRing(p) {
+  const r = effSpeed(p) / 1.15;
+  const cx = p.x + Math.cos(p.heading + Math.PI / 2) * r;
+  const cy = p.y + Math.sin(p.heading + Math.PI / 2) * r;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([5, 8]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, TAU);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawWindsock() {
+  const w = airport.wind;
+  if (!w) return;
+  ctx.save();
+  ctx.translate(W - 56, H - 64);
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = 'rgba(18,24,34,0.6)';
+  ctx.beginPath(); ctx.arc(0, 0, 21, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, 0, 21, 0, TAU); ctx.stroke();
+  ctx.rotate(w.ang);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(-10, 0); ctx.lineTo(9, 0);
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(15, 0); ctx.lineTo(6, -5); ctx.lineTo(6, 5);
+  ctx.closePath(); ctx.fill();
+  ctx.rotate(-w.ang);
+  ctx.font = '800 10px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillText(`WIND ${Math.round(w.spd * 2)} KT`, 0, 26);
+  ctx.restore();
+}
+
+function drawBanner() {
+  if (!banner) return;
+  const t = banner.age / 2.6;
+  const a = t < 0.15 ? t / 0.15 : t > 0.75 ? (1 - t) / 0.25 : 1;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, a);
+  ctx.font = '900 36px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 7;
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillStyle = '#ffd93c';
+  const y = H * 0.2;
+  ctx.strokeText(banner.text, W / 2, y);
+  ctx.fillText(banner.text, W / 2, y);
   ctx.restore();
 }
 
@@ -1034,6 +1166,7 @@ function render() {
   const inPlay = state === 'play' || state === 'paused' || state === 'crash' || state === 'stagec';
   if (inPlay) {
     for (const p of planes) drawPath(p);
+    for (const p of planes) if (p.hold && !p.path.length && !p.landing) drawHoldRing(p);
     for (const p of planes) drawTrail(p);
     drawTcasPairs();
     for (const p of planes) drawPlane(p, true);
@@ -1052,6 +1185,8 @@ function render() {
   }
 
   drawClouds();
+  drawWindsock();
+  if (inPlay) drawBanner();
 
   if (flash > 0) {
     ctx.save();
@@ -1069,15 +1204,24 @@ function eventPos(e) {
   return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
 
+// a landing plane can still be waved off while it's early in the approach
+function canGoAround(p) {
+  if (!p.landing) return false;
+  if (p.landing.kind === 'strip') return p.path.length > 1 || p.landProgress <= 0.25;
+  return p.path.length > 0; // heli not hovering down yet
+}
+
 canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
   SFX.init();
   SFX.resume();
   if (state !== 'play') return;
   const pos = eventPos(e);
-  let bestP = null, bestD = PICK_D;
+  const pickR = cfg.bigTouch ? 56 : PICK_D;
+  let bestP = null, bestD = pickR;
   for (const p of planes) {
-    if (p.done || p.landing) continue;
+    if (p.done) continue;
+    if (p.landing && !canGoAround(p)) continue;
     const d = dist(p, pos);
     if (d < bestD) { bestD = d; bestP = p; }
   }
@@ -1096,6 +1240,15 @@ canvas.addEventListener('pointermove', e => {
   const pos = eventPos(e);
   if (!active._moved && Math.hypot(pos.x - active._downPos.x, pos.y - active._downPos.y) > 10) {
     active._moved = true;
+    active.hold = false;
+    if (active.landing) {
+      // go-around: abort the approach and take manual control again
+      active.landing = null;
+      active.landProgress = 0;
+      active.scale = 1;
+      popups.push({ x: active.x, y: active.y - 24, text: 'GO-AROUND', age: 0.3 });
+      SFX.blip();
+    }
   }
   const last = active.path[active.path.length - 1] || active;
   if (Math.hypot(pos.x - last.x, pos.y - last.y) > 7) {
@@ -1110,12 +1263,32 @@ function cycleSpeed(p) {
   SFX.click();
 }
 
+function toggleHold(p) {
+  p.hold = !p.hold;
+  if (p.hold) p.path = [];
+  popups.push({ x: p.x, y: p.y - 24, text: p.hold ? 'HOLDING ⟳' : 'RESUME', age: 0.3 });
+  SFX.confirm();
+}
+
+let lastTap = { p: null, t: 0 };
+
 function endDrag() {
   if (!active) return;
   if (!active._moved) {
-    // treated as a tap — restore the old route and cycle aircraft speed
+    // tap — restore the old route; single tap cycles speed, double-tap holds
     active.path = active._oldPath || [];
-    cycleSpeed(active);
+    if (!active.landing) {
+      const now = performance.now() / 1000;
+      if (lastTap.p === active && now - lastTap.t < 0.4) {
+        active.spdMod = active._preTapSpd != null ? active._preTapSpd : active.spdMod;
+        toggleHold(active);
+        lastTap = { p: null, t: 0 };
+      } else {
+        active._preTapSpd = active.spdMod;
+        cycleSpeed(active);
+        lastTap = { p: active, t: now };
+      }
+    }
   } else if (tryLand(active)) {
     SFX.confirm();
   }
@@ -1127,11 +1300,46 @@ canvas.addEventListener('pointercancel', endDrag);
 
 /* ---------------- menu config ---------------- */
 
+/* airport unlocks — CDG and RANDOM open up after clearing SFO+JFK+LHR stages */
+
+function loadCleared() {
+  try { return new Set(JSON.parse(localStorage.getItem('atc-cleared') || '[]')); }
+  catch (e) { return new Set(); }
+}
+
+function airportLocked(k) {
+  if (k !== 'CDG' && k !== 'RND') return false;
+  const c = loadCleared();
+  return !['SFO', 'JFK', 'LHR'].every(a => c.has(a));
+}
+
+function refreshLocks() {
+  for (const b of $('airportSel').querySelectorAll('.sel')) {
+    const k = b.dataset.k;
+    const locked = airportLocked(k);
+    b.classList.toggle('locked', locked);
+    b.textContent = (locked ? '🔒 ' : '') + (k === 'RND' ? '🎲 RANDOM' : k);
+  }
+}
+
+function markCleared(code) {
+  const c = loadCleared();
+  c.add(code);
+  localStorage.setItem('atc-cleared', JSON.stringify([...c]));
+  refreshLocks();
+}
+
 function bindSelector(rowId, attr, onPick) {
   const row = $(rowId);
   row.addEventListener('click', e => {
     const btn = e.target.closest('.sel');
     if (!btn) return;
+    if (btn.classList.contains('locked')) {
+      $('aptName').textContent = '🔒 Clear SFO, JFK & LHR in Stage mode to unlock';
+      SFX.init();
+      SFX.warn();
+      return;
+    }
     for (const b of row.querySelectorAll('.sel')) b.classList.remove('on');
     btn.classList.add('on');
     SFX.init();
@@ -1171,6 +1379,26 @@ const reflectPractice = bindSelector('practiceSel', 'p', p => {
   saveCfg();
   updateHud();
 });
+const reflectPace = bindSelector('paceSel', 'pc', pc => {
+  cfg.pace = pc;
+  saveCfg();
+});
+
+$('cbBtn').addEventListener('click', () => {
+  cfg.cb = !cfg.cb;
+  $('cbBtn').classList.toggle('on', cfg.cb);
+  saveCfg();
+  renderField(); // runway markers live on the cached ground layer
+  SFX.init();
+  SFX.click();
+});
+$('touchBtn').addEventListener('click', () => {
+  cfg.bigTouch = !cfg.bigTouch;
+  $('touchBtn').classList.toggle('on', cfg.bigTouch);
+  saveCfg();
+  SFX.init();
+  SFX.click();
+});
 
 /* ---------------- flow control ---------------- */
 
@@ -1192,6 +1420,7 @@ function reset() {
   score = 0; stageLanded = 0; totalLanded = 0; elapsed = 0;
   stage = 1;
   spawnT = 0.6; shake = 0; flash = 0; lastBeep = -9;
+  rushT = rand(35, 60); burstLeft = 0; banner = null;
   active = null;
   airportIdx = Math.max(0, AIRPORT_ORDER.indexOf(cfg.apt));
   updateHud();
@@ -1228,7 +1457,7 @@ function goToMenu() {
   }
   state = 'menu';
   planes = []; popups = []; explosions = []; tcasPairs = [];
-  active = null; shake = 0; flash = 0;
+  active = null; shake = 0; flash = 0; banner = null;
   SFX.setEngine(0);
   SFX.click();
   $('over').classList.add('hidden');
@@ -1289,7 +1518,9 @@ document.addEventListener('visibilitychange', () => {
 
 /* ---------------- boot ---------------- */
 
+if (airportLocked(cfg.apt)) cfg.apt = 'SFO'; // saved airport may have been from cleared storage
 airport = instantiateAirport(cfg.apt);
+airportIdx = Math.max(0, AIRPORT_ORDER.indexOf(cfg.apt));
 
 function resize() {
   W = window.innerWidth;
@@ -1309,6 +1540,10 @@ reflectApt(cfg.apt);
 reflectMode(cfg.mode);
 reflectTarget(cfg.target);
 reflectPractice(cfg.practice ? 'on' : 'off');
+reflectPace(cfg.pace);
+$('cbBtn').classList.toggle('on', cfg.cb);
+$('touchBtn').classList.toggle('on', cfg.bigTouch);
+refreshLocks();
 renderLB($('lbMenu'));
 $('aptName').textContent = airport.name + (cfg.apt === 'RND' ? ' (randomized)' : '');
 $('targetSel').classList.toggle('hidden', cfg.mode !== 'stages');
@@ -1345,6 +1580,8 @@ if (_qs.has('stages')) {
   cfg.target = +_qs.get('stages') || 200;
 }
 if (_qs.has('practice')) cfg.practice = true;
+if (_qs.has('relaxed')) cfg.pace = 'relaxed';
+if (_qs.has('cb')) { cfg.cb = true; renderField(); }
 if (_qs.has('play')) startGame();
 if (_qs.has('ff')) {
   const secs = +_qs.get('ff') || 10;

@@ -56,10 +56,20 @@
           <button class="sel" data-t="100">100 ✈</button>
           <button class="sel on" data-t="200">200 ✈</button>
         </div>
+        <div class="cfg-label">PACE</div>
+        <div class="cfg-row" id="paceSel">
+          <button class="sel on" data-pc="normal">NORMAL</button>
+          <button class="sel" data-pc="relaxed">RELAXED</button>
+        </div>
         <div class="cfg-label">CRASHES</div>
         <div class="cfg-row" id="practiceSel">
           <button class="sel on" data-p="off">MAYDAY ENDS RUN</button>
           <button class="sel" data-p="on">PRACTICE — KEEP FLYING</button>
+        </div>
+        <div class="cfg-label">OPTIONS</div>
+        <div class="cfg-row">
+          <button class="sel" id="cbBtn">👁 COLORBLIND MARKERS</button>
+          <button class="sel" id="touchBtn">🎯 BIG TOUCH TARGETS</button>
         </div>
       </div>
 
@@ -70,7 +80,7 @@
       </div>
       <button id="startBtn" class="big-btn">START SHIFT</button>
       <div class="lb" id="lbMenu"></div>
-      <p class="hint">Drag a path from an aircraft to its runway.<br>Tap an aircraft to cycle its speed « · »<br>Two aircraft touch — it's a mayday.</p>
+      <p class="hint">Drag a path from an aircraft to its runway.<br>Tap: cycle speed « · » — Double-tap: holding pattern ⟳<br>Drag a landing aircraft to send it around again.<br>Two aircraft touch — it's a mayday.</p>
     </div>
   </div>
 
