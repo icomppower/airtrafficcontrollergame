@@ -19,6 +19,8 @@
       <span class="lbl">LANDED</span><span id="landedHud">0</span>
       <span class="sep stage-ui hidden"></span>
       <span class="lbl stage-ui hidden">STAGE</span><span id="stageHud" class="stage-ui hidden">1</span>
+      <span class="sep practice-ui hidden"></span>
+      <span class="lbl practice practice-ui hidden">PRACTICE</span>
     </div>
     <div class="btns">
       <button id="tcasBtn" class="txt on" title="TCAS collision prediction (T)">TCAS</button>
@@ -54,6 +56,11 @@
           <button class="sel" data-t="100">100 ✈</button>
           <button class="sel on" data-t="200">200 ✈</button>
         </div>
+        <div class="cfg-label">CRASHES</div>
+        <div class="cfg-row" id="practiceSel">
+          <button class="sel on" data-p="off">MAYDAY ENDS RUN</button>
+          <button class="sel" data-p="on">PRACTICE — KEEP FLYING</button>
+        </div>
       </div>
 
       <div class="legend">
@@ -62,6 +69,7 @@
         <div class="row"><span class="dot heli"></span> Choppers → <b>helipad</b></div>
       </div>
       <button id="startBtn" class="big-btn">START SHIFT</button>
+      <div class="lb" id="lbMenu"></div>
       <p class="hint">Drag a path from an aircraft to its runway.<br>Tap an aircraft to cycle its speed « · »<br>Two aircraft touch — it's a mayday.</p>
     </div>
   </div>
@@ -76,6 +84,7 @@
         <div><span class="lbl">LANDED</span><span id="stageLandedEl">0</span></div>
       </div>
       <button id="nextBtn" class="big-btn">NEXT AIRPORT</button>
+      <button id="menuBtnStage" class="ghost-btn">MAIN MENU</button>
     </div>
   </div>
 
@@ -89,7 +98,9 @@
         <div><span class="lbl">BEST</span><span id="finalBest">0</span></div>
       </div>
       <div id="newBest" class="newbest hidden">★ NEW BEST ★</div>
+      <div class="lb" id="lbOver"></div>
       <button id="restartBtn" class="big-btn">BACK ON DUTY</button>
+      <button id="menuBtnOver" class="ghost-btn">MAIN MENU</button>
     </div>
   </div>
 
@@ -97,6 +108,7 @@
     <div class="panel small">
       <h1>PAUSED</h1>
       <p class="hint">Tap anywhere to resume</p>
+      <button id="menuBtnPause" class="ghost-btn">MAIN MENU</button>
     </div>
   </div>
 </div>

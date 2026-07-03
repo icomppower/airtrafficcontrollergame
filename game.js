@@ -115,7 +115,7 @@ let shake = 0, flash = 0, lastBeep = -9;
 let field = null;
 
 // config (persisted)
-let cfg = { apt: 'SFO', mode: 'endless', target: 200, tcas: true };
+let cfg = { apt: 'SFO', mode: 'endless', target: 200, tcas: true, practice: false };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('atc-cfg') || '{}')); } catch (e) {}
 let airport = null;
 let airportIdx = Math.max(0, AIRPORT_ORDER.indexOf(cfg.apt));
@@ -577,7 +577,11 @@ function checkConflicts() {
       const b = planes[j];
       if (!collidable(b)) continue;
       const d = dist(a, b);
-      if (d < CRASH_D) { crashAt(a, b); return; }
+      if (d < CRASH_D) {
+        crashAt(a, b);
+        if (state === 'crash') return;
+        break; // practice mode: both planes are gone, move to the next aircraft
+      }
       let level = null;
       let px = (a.x + b.x) / 2, py = (a.y + b.y) / 2;
       if (d < WARN_D) level = 'ta';
@@ -610,8 +614,46 @@ function crashAt(a, b) {
   SFX.crash();
   shake = 0.6;
   flash = 0.5;
+  if (cfg.practice) {
+    const pen = 150;
+    score = Math.max(0, score - pen);
+    popups.push({ x, y: y - 34, text: '-' + pen, age: 0 });
+    updateHud();
+    return;
+  }
   state = 'crash';
   crashT = 1.5;
+}
+
+/* ---------------- leaderboard (local only) ---------------- */
+
+function loadLB() {
+  try { return JSON.parse(localStorage.getItem('atc-lb') || '[]'); }
+  catch (e) { return []; }
+}
+
+function saveScoreToLB() {
+  if (score <= 0) return;
+  const lb = loadLB();
+  lb.push({
+    s: score, l: totalLanded, a: airport.code,
+    m: cfg.mode === 'stages' ? 'STG ' + stage : 'NON-STOP',
+    p: cfg.practice ? 1 : 0,
+    d: new Date().toISOString().slice(0, 10),
+  });
+  lb.sort((x, y) => y.s - x.s);
+  localStorage.setItem('atc-lb', JSON.stringify(lb.slice(0, 10)));
+}
+
+function renderLB(el, n) {
+  const lb = loadLB().slice(0, n || 5);
+  if (!lb.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="lb-title">BEST SHIFTS</div>' + lb.map((e, i) =>
+    `<div class="lb-row${i === 0 ? ' top' : ''}">` +
+    `<span class="rank">${i + 1}</span>` +
+    `<span class="pts">${e.s}</span>` +
+    `<span class="meta">${e.l}✈ · ${e.a} · ${e.m}${e.p ? ' · PRAC' : ''} · ${e.d.slice(5)}</span>` +
+    `</div>`).join('');
 }
 
 function gameOver() {
@@ -621,6 +663,8 @@ function gameOver() {
     best = score;
     localStorage.setItem('atc-best', best);
   }
+  saveScoreToLB();
+  renderLB($('lbOver'));
   $('finalScore').textContent = score;
   $('finalLanded').textContent = totalLanded;
   $('finalBest').textContent = best;
@@ -1122,6 +1166,11 @@ const reflectTarget = bindSelector('targetSel', 't', t => {
   cfg.target = +t;
   saveCfg();
 });
+const reflectPractice = bindSelector('practiceSel', 'p', p => {
+  cfg.practice = p === 'on';
+  saveCfg();
+  updateHud();
+});
 
 /* ---------------- flow control ---------------- */
 
@@ -1132,6 +1181,9 @@ function updateHud() {
   stageHudEl.textContent = stage;
   for (const el of document.querySelectorAll('.stage-ui')) {
     el.classList.toggle('hidden', cfg.mode !== 'stages');
+  }
+  for (const el of document.querySelectorAll('.practice-ui')) {
+    el.classList.toggle('hidden', !cfg.practice);
   }
 }
 
@@ -1168,6 +1220,25 @@ function togglePause() {
   }
 }
 
+function goToMenu() {
+  // abandoning a live run still records it on the local leaderboard
+  if (state === 'play' || state === 'paused' || state === 'stagec') {
+    if (score > best) { best = score; localStorage.setItem('atc-best', best); }
+    saveScoreToLB();
+  }
+  state = 'menu';
+  planes = []; popups = []; explosions = []; tcasPairs = [];
+  active = null; shake = 0; flash = 0;
+  SFX.setEngine(0);
+  SFX.click();
+  $('over').classList.add('hidden');
+  $('paused').classList.add('hidden');
+  $('stagec').classList.add('hidden');
+  $('start').classList.remove('hidden');
+  renderLB($('lbMenu'));
+  updateHud();
+}
+
 $('startBtn').addEventListener('click', startGame);
 $('restartBtn').addEventListener('click', () => {
   // regenerate a random field for variety on restart
@@ -1176,6 +1247,12 @@ $('restartBtn').addEventListener('click', () => {
 });
 $('nextBtn').addEventListener('click', nextStage);
 $('paused').addEventListener('click', togglePause);
+$('menuBtnOver').addEventListener('click', goToMenu);
+$('menuBtnStage').addEventListener('click', goToMenu);
+$('menuBtnPause').addEventListener('click', e => {
+  e.stopPropagation(); // don't let the paused-overlay resume handler fire
+  goToMenu();
+});
 $('pauseBtn').addEventListener('click', () => {
   SFX.click();
   togglePause();
@@ -1231,6 +1308,8 @@ resize();
 reflectApt(cfg.apt);
 reflectMode(cfg.mode);
 reflectTarget(cfg.target);
+reflectPractice(cfg.practice ? 'on' : 'off');
+renderLB($('lbMenu'));
 $('aptName').textContent = airport.name + (cfg.apt === 'RND' ? ' (randomized)' : '');
 $('targetSel').classList.toggle('hidden', cfg.mode !== 'stages');
 $('tcasBtn').classList.toggle('on', cfg.tcas);
@@ -1265,6 +1344,7 @@ if (_qs.has('stages')) {
   cfg.mode = 'stages';
   cfg.target = +_qs.get('stages') || 200;
 }
+if (_qs.has('practice')) cfg.practice = true;
 if (_qs.has('play')) startGame();
 if (_qs.has('ff')) {
   const secs = +_qs.get('ff') || 10;
