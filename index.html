@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tower Control — Air Traffic Game</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="game">
+  <canvas id="c"></canvas>
+
+  <div id="hud">
+    <div class="chip" id="scorechip">
+      <span class="lbl">SCORE</span><span id="score">0</span>
+      <span class="sep"></span>
+      <span class="lbl">BEST</span><span id="bestHud">0</span>
+      <span class="sep"></span>
+      <span class="lbl">LANDED</span><span id="landedHud">0</span>
+      <span class="sep stage-ui hidden"></span>
+      <span class="lbl stage-ui hidden">STAGE</span><span id="stageHud" class="stage-ui hidden">1</span>
+    </div>
+    <div class="btns">
+      <button id="tcasBtn" class="txt on" title="TCAS collision prediction (T)">TCAS</button>
+      <button id="speedBtn" class="txt" title="Game speed (F)">1×</button>
+      <button id="pauseBtn" title="Pause (Space)">❚❚</button>
+      <button id="soundBtn" title="Sound (M)">🔊</button>
+    </div>
+  </div>
+
+  <div id="start" class="overlay">
+    <div class="panel">
+      <div class="tower-badge">🛫</div>
+      <h1>TOWER<br>CONTROL</h1>
+      <p class="tag">You are the tower. Land them all.</p>
+
+      <div class="cfg">
+        <div class="cfg-label">AIRPORT</div>
+        <div class="cfg-row" id="airportSel">
+          <button class="sel on" data-k="SFO">SFO</button>
+          <button class="sel" data-k="JFK">JFK</button>
+          <button class="sel" data-k="LHR">LHR</button>
+          <button class="sel" data-k="CDG">CDG</button>
+          <button class="sel" data-k="RND">🎲 RANDOM</button>
+        </div>
+        <div class="apt-name" id="aptName">San Francisco International</div>
+        <div class="cfg-label">SHIFT TYPE</div>
+        <div class="cfg-row" id="modeSel">
+          <button class="sel on" data-m="endless">NON-STOP</button>
+          <button class="sel" data-m="stages">STAGES</button>
+        </div>
+        <div class="cfg-row hidden" id="targetSel">
+          <button class="sel" data-t="50">50 ✈</button>
+          <button class="sel" data-t="100">100 ✈</button>
+          <button class="sel on" data-t="200">200 ✈</button>
+        </div>
+      </div>
+
+      <div class="legend">
+        <div class="row"><span class="dot jet"></span> Jets → <b>red runways</b></div>
+        <div class="row"><span class="dot prop"></span> Props → <b>amber strips</b></div>
+        <div class="row"><span class="dot heli"></span> Choppers → <b>helipad</b></div>
+      </div>
+      <button id="startBtn" class="big-btn">START SHIFT</button>
+      <p class="hint">Drag a path from an aircraft to its runway.<br>Tap an aircraft to cycle its speed « · »<br>Two aircraft touch — it's a mayday.</p>
+    </div>
+  </div>
+
+  <div id="stagec" class="overlay hidden">
+    <div class="panel">
+      <div class="tower-badge">🏁</div>
+      <h1>STAGE <span id="stageNum">1</span><br>CLEAR!</h1>
+      <p class="tag" id="nextAptName">Next: JFK</p>
+      <div class="stats">
+        <div><span class="lbl">SCORE</span><span id="stageScore">0</span></div>
+        <div><span class="lbl">LANDED</span><span id="stageLandedEl">0</span></div>
+      </div>
+      <button id="nextBtn" class="big-btn">NEXT AIRPORT</button>
+    </div>
+  </div>
+
+  <div id="over" class="overlay hidden">
+    <div class="panel">
+      <div class="tower-badge boom">💥</div>
+      <h1 class="mayday">MAYDAY!</h1>
+      <div class="stats">
+        <div><span class="lbl">SCORE</span><span id="finalScore">0</span></div>
+        <div><span class="lbl">LANDED</span><span id="finalLanded">0</span></div>
+        <div><span class="lbl">BEST</span><span id="finalBest">0</span></div>
+      </div>
+      <div id="newBest" class="newbest hidden">★ NEW BEST ★</div>
+      <button id="restartBtn" class="big-btn">BACK ON DUTY</button>
+    </div>
+  </div>
+
+  <div id="paused" class="overlay hidden">
+    <div class="panel small">
+      <h1>PAUSED</h1>
+      <p class="hint">Tap anywhere to resume</p>
+    </div>
+  </div>
+</div>
+<script src="audio.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
