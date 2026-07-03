@@ -3,6 +3,13 @@
 A Flight-Control-style air traffic controller game for the browser. You are the tower —
 drag flight paths from incoming aircraft to their matching runways and don't let anything touch.
 
+**▶ Play: https://icomppower.github.io/airtrafficcontrollergame/**
+
+| | |
+| --- | --- |
+| ![Menu](screenshots/menu.png) | ![SFO](screenshots/sfo.png) |
+| ![Random airport with TCAS alert](screenshots/random-tcas.png) | ![Stage clear](screenshots/stage-clear.png) |
+
 ## Play
 
 Any static server works (no build step, no dependencies):
