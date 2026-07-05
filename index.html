@@ -36,13 +36,17 @@
       <h1>TOWER<br>CONTROL</h1>
       <p class="tag">You are the tower. Land them all.</p>
 
-      <div class="cfg">
+      <button id="justPlayBtn" class="big-btn">🎮 JUST PLAY</button>
+      <button id="advToggle" class="ghost-btn">⚙ ADVANCED OPTIONS ▾</button>
+
+      <div class="cfg hidden" id="cfgPanel">
         <div class="cfg-label">AIRPORT</div>
         <div class="cfg-row" id="airportSel">
           <button class="sel on" data-k="SFO">SFO</button>
           <button class="sel" data-k="JFK">JFK</button>
           <button class="sel" data-k="LHR">LHR</button>
           <button class="sel" data-k="CDG">CDG</button>
+          <button class="sel" data-k="DEN">DEN</button>
           <button class="sel" data-k="RND">🎲 RANDOM</button>
         </div>
         <div class="apt-name" id="aptName">San Francisco International</div>
@@ -79,6 +83,7 @@
           <button class="sel" id="assistBtn">🤖 AUTO-AVOID</button>
           <button class="sel on" id="comboBtn">🔥 COMBOS</button>
           <button class="sel" id="glideBtn">🛬 GLIDE PATHS</button>
+          <button class="sel" id="closuresBtn">🚧 RUNWAY CLOSURES</button>
         </div>
         <div class="cfg-row">
           <button class="sel" id="cbBtn">👁 COLORBLIND MARKERS</button>

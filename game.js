@@ -22,7 +22,7 @@ const WATER_FRAC = 0.22;
 
 /* ---------------- airports ---------------- */
 
-const AIRPORT_ORDER = ['SFO', 'JFK', 'LHR', 'CDG', 'RND'];
+const AIRPORT_ORDER = ['SFO', 'JFK', 'LHR', 'CDG', 'DEN', 'RND'];
 
 const AIRPORTS = {
   SFO: {
@@ -60,6 +60,20 @@ const AIRPORTS = {
       { type: 'prop', x: 0.57, y: 0.61, angle: 0.06, lenF: 0.32, num: '8L' },
     ],
     pad: { x: 0.14, y: 0.47 },
+  },
+  DEN: {
+    code: 'DEN', name: 'Denver International', water: null,
+    // six runways radiating from a shared hub, pinwheel-style — a stylized
+    // visual reference, not a literal copy of the real airport's layout
+    strips: [
+      { type: 'jet',  x: 0.650, y: 0.480, angle: 0,               lenF: 0.42, num: '16R' },
+      { type: 'prop', x: 0.558, y: 0.580, angle: Math.PI / 3,     lenF: 0.30, num: '8' },
+      { type: 'jet',  x: 0.425, y: 0.610, angle: 2 * Math.PI / 3, lenF: 0.42, num: '34L' },
+      { type: 'prop', x: 0.385, y: 0.480, angle: Math.PI,         lenF: 0.30, num: '16L' },
+      { type: 'jet',  x: 0.425, y: 0.350, angle: 4 * Math.PI / 3, lenF: 0.42, num: '26' },
+      { type: 'prop', x: 0.558, y: 0.380, angle: 5 * Math.PI / 3, lenF: 0.30, num: '34R' },
+    ],
+    pad: { x: 0.50, y: 0.85 },
   },
 };
 
@@ -117,12 +131,15 @@ let best = +(localStorage.getItem('atc-best') || 0);
 let active = null;
 let shake = 0, flash = 0, lastBeep = -9;
 let field = null;
+let closureT = 60, closedRw = null, closuresThisRun = 0, lastClosedRw = null;
+let closureCooldown = new WeakMap();
+let toastShown = new Set(), toastMsg = null;
 
 // config (persisted)
 let cfg = {
   apt: 'SFO', mode: 'endless', target: 200, tcas: true, practice: false,
   pace: 'normal', cb: false, bigTouch: false,
-  scene: 'day', emerg: true, assist: false, combo: true, glide: false,
+  scene: 'day', emerg: true, assist: false, combo: true, glide: false, closures: false,
 };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('atc-cfg') || '{}')); } catch (e) {}
 let airport = null;
@@ -145,6 +162,14 @@ function lerpAngle(a, b, t) {
 }
 
 function saveCfg() { localStorage.setItem('atc-cfg', JSON.stringify(cfg)); }
+
+// one-shot in-run explanation the first time an optional toggled-on system
+// actually triggers, instead of an upfront wall of help text
+function firstTimeToast(key, text) {
+  if (toastShown.has(key)) return;
+  toastShown.add(key);
+  toastMsg = { text, age: 0 };
+}
 
 /* ---------------- layout & ground ---------------- */
 
@@ -534,7 +559,7 @@ function effSpeed(p) {
 function tryLand(p) {
   const end = p.path.length ? p.path[p.path.length - 1] : { x: p.x, y: p.y };
   for (const rw of runways) {
-    if (rw.type !== p.type) continue;
+    if (rw.type !== p.type || rw.closed) continue;
     if (rw.kind === 'pad') {
       if (Math.hypot(end.x - rw.x, end.y - rw.y) < rw.r + 12) {
         p.path.push({ x: rw.x, y: rw.y });
@@ -564,7 +589,7 @@ function tryLand(p) {
 function findSnapTarget(p, pos) {
   let best = null, bestD = Infinity;
   for (const rw of runways) {
-    if (rw.type !== p.type) continue;
+    if (rw.type !== p.type || rw.closed) continue;
     if (rw.kind === 'pad') {
       const d = Math.hypot(pos.x - rw.x, pos.y - rw.y);
       if (d < rw.r + 12 + 55 && d < bestD) { bestD = d; best = { x: rw.x, y: rw.y }; }
@@ -589,6 +614,19 @@ function findSnapTarget(p, pos) {
   return best;
 }
 
+// released near another same-type aircraft that's already on final glide —
+// assign a follow relationship instead of requiring a full manual path
+function findFollowTarget(p, pos) {
+  let best = null, bestD = 50;
+  for (const other of planes) {
+    if (other === p || other.done || other.type !== p.type) continue;
+    if (!other.landing || other.landing.kind !== 'strip') continue;
+    const d = dist(pos, other);
+    if (d < bestD) { bestD = d; best = other; }
+  }
+  return best;
+}
+
 // ILS-style capture: touching a runway's extended approach corridor while
 // dragging auto-continues the path onto the centerline and into landing —
 // a drawing shortcut only, no collision immunity beyond normal landing rules
@@ -597,7 +635,7 @@ function tryGlideCapture(p) {
   const pos = p.path[p.path.length - 1];
   if (!pos) return false;
   for (const rw of runways) {
-    if (rw.kind !== 'strip' || rw.type !== p.type) continue;
+    if (rw.kind !== 'strip' || rw.type !== p.type || rw.closed) continue;
     for (const c of rw.corridors) {
       const dx = c.farx - c.tx, dy = c.fary - c.ty;
       const len2 = dx * dx + dy * dy;
@@ -613,11 +651,51 @@ function tryGlideCapture(p) {
         p.landing = { rw, kind: 'strip', t0, t1, len: Math.hypot(t1.x - t0.x, t1.y - t0.y) };
         popups.push({ x: pos.x, y: pos.y - 22, text: 'GLIDE CAPTURED ✓', age: 0 });
         SFX.confirm();
+        firstTimeToast('glide', '🛬 Glide path captured — the aircraft auto-continues onto the runway.');
         return true;
       }
     }
   }
   return false;
+}
+
+// wind-weighted runway closures — an opt-in extra layer, same pattern as the
+// fuel/TCAS/combo toggles. Reuses the airport's existing wind data instead of
+// building a live weather system: a strip is more likely to be picked the
+// stronger its current crosswind component is.
+const CLOSURE_CAP = 3;
+function maybeCloseRunway() {
+  const strips = runways.filter(r => r.kind === 'strip');
+  const eligible = strips.filter(rw => {
+    if ((closureCooldown.get(rw) || 0) > elapsed) return false;
+    const sameTypeOpen = strips.filter(r => r.type === rw.type && r !== rw && !r.closed).length;
+    return sameTypeOpen > 0; // never close the last open strip for a type
+  });
+  if (!eligible.length) return;
+  const weights = eligible.map(rw => {
+    const cross = Math.abs(Math.sin(airport.wind.ang - rw.angle)) * airport.wind.spd;
+    return Math.max(0.05, cross) * (rw === lastClosedRw ? 0.25 : 1);
+  });
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total, idx = 0;
+  for (; idx < weights.length - 1; idx++) { r -= weights[idx]; if (r <= 0) break; }
+  const rw = eligible[idx];
+  rw.closed = true;
+  closedRw = rw;
+  rw.closeTimer = rand(20, 45) * (cfg.pace === 'relaxed' ? 1.3 : 1);
+  closuresThisRun++;
+  lastClosedRw = rw;
+  banner = { text: `🚧 RUNWAY ${rw.num} CLOSED`, age: 0 };
+  SFX.rush();
+  firstTimeToast('closures', '🚧 A runway just closed — route traffic to another one until it reopens.');
+}
+
+function reopenRunway() {
+  if (!closedRw) return;
+  closureCooldown.set(closedRw, elapsed + rand(45, 80));
+  closedRw.closed = false;
+  popups.push({ x: closedRw.x, y: closedRw.y - 10, text: 'RUNWAY REOPENED', age: 0 });
+  closedRw = null;
 }
 
 function collidable(p) {
@@ -645,6 +723,7 @@ function finishLanding(p) {
       pts *= mult;
       label += ` 🔥×${mult}`;
       if (mult >= 3) banner = { text: `COMBO ×${mult}!`, age: 0 };
+      firstTimeToast('combo', '🔥 Land aircraft within 6 seconds of each other to build a score multiplier.');
     }
   }
   score += pts;
@@ -654,6 +733,33 @@ function finishLanding(p) {
   SFX.chime();
   updateHud();
   if (cfg.mode === 'stages' && stageLanded >= cfg.target && state === 'play') stageClear();
+}
+
+// chases a point behind the lead aircraft; hands off to a normal strip
+// landing (same t0/t1 as the lead) once close enough and the lead has
+// started its final glide. Returns true while still chasing (movement
+// already applied — skip the rest of updatePlane this frame).
+const FOLLOW_GAP = 62;
+function updateFollow(p, dt) {
+  const lead = p.followTarget;
+  if (!lead || lead.done || !planes.includes(lead)) { p.followTarget = null; return false; }
+  if (lead.landing && lead.landing.kind === 'strip' && dist(p, lead) < FOLLOW_GAP * 1.4) {
+    p.path = [{ x: lead.landing.t0.x, y: lead.landing.t0.y }, lead.landing.t1];
+    p.landing = { rw: lead.landing.rw, kind: 'strip', t0: lead.landing.t0, t1: lead.landing.t1, len: lead.landing.len };
+    p.followTarget = null;
+    popups.push({ x: p.x, y: p.y - 22, text: 'SEQUENCED → LANDING', age: 0 });
+    return false;
+  }
+  const tx = lead.x - Math.cos(lead.dispHeading) * FOLLOW_GAP;
+  const ty = lead.y - Math.sin(lead.dispHeading) * FOLLOW_GAP;
+  p.heading = Math.atan2(ty - p.y, tx - p.x);
+  const sp = effSpeed(p);
+  p.x += Math.cos(p.heading) * sp * dt;
+  p.y += Math.sin(p.heading) * sp * dt;
+  p.dispHeading = lerpAngle(p.dispHeading, p.heading, Math.min(1, dt * 8));
+  p.trailT += dt;
+  if (p.trailT > 0.06) { p.trailT = 0; p.trail.push({ x: p.x, y: p.y }); if (p.trail.length > 10) p.trail.shift(); }
+  return true;
 }
 
 function updatePlane(p, dt) {
@@ -689,6 +795,8 @@ function updatePlane(p, dt) {
       return;
     }
   }
+
+  if (p.followTarget && updateFollow(p, dt)) return;
 
   if (p.landing && p.landing.kind === 'strip' && p.path.length <= 1) {
     p.landProgress = clamp(1 - dist(p, p.landing.t1) / p.landing.len, 0, 1);
@@ -799,6 +907,7 @@ function checkConflicts() {
         raiseAlert(b, level);
         if (level === 'ra') {
           anyRa = true;
+          firstTimeToast('tcas', '⚠ Red ring = collision course — reroute or slow one aircraft.');
           if (cfg.assist) {
             // auto-avoid: TCAS slows the faster aircraft of the pair
             const slow = effSpeed(a) >= effSpeed(b) ? a : b;
@@ -806,6 +915,7 @@ function checkConflicts() {
             if (!slow._assistOn) {
               slow._assistOn = true;
               popups.push({ x: slow.x, y: slow.y - 24, text: 'TCAS ⬇ SLOW', age: 0.3 });
+              firstTimeToast('assist', '🤖 Auto-avoid is slowing an aircraft to break up the conflict.');
             }
           }
         } else anyTa = true;
@@ -919,6 +1029,7 @@ function nextStage() {
   lastBeep = -9;
   rushT = rand(35, 60); burstLeft = 0; banner = null;
   emergT = rand(30, 55); comboN = 0; lastLandT = -99;
+  closedRw = null; // runways array was just rebuilt; drop the stale reference
   $('stagec').classList.add('hidden');
   updateHud();
   state = 'play';
@@ -941,6 +1052,7 @@ function update(dt) {
     burstT = 0;
     banner = { text: 'RUSH HOUR!', age: 0 };
     SFX.rush();
+    firstTimeToast('rush', '🚨 Rush hour — several aircraft incoming at once. Stay ahead of the queue.');
   }
   if (burstLeft > 0) {
     burstT -= dt;
@@ -965,8 +1077,21 @@ function update(dt) {
         popups.push({ x: p.x, y: p.y - 26, text: '⛽ LOW FUEL!', age: 0 });
         banner = { text: '⛽ EMERGENCY — LAND IT NOW!', age: 0 };
         SFX.emergency();
+        firstTimeToast('emerg', '⛽ Low fuel — land this aircraft fast for ×2 points before time runs out.');
       }
     }
+  }
+  // runway closures — rare, spaced-out, capped per run
+  if (cfg.closures) {
+    closureT -= dt;
+    if (closureT <= 0) {
+      closureT = rand(70, 110) * (cfg.pace === 'relaxed' ? 1.3 : 1);
+      if (!closedRw && closuresThisRun < CLOSURE_CAP) maybeCloseRunway();
+    }
+  }
+  if (closedRw) {
+    closedRw.closeTimer -= dt;
+    if (closedRw.closeTimer <= 0) reopenRunway();
   }
   for (const p of planes) updatePlane(p, dt);
   planes = planes.filter(p => !p.done);
@@ -997,6 +1122,10 @@ function updateFx(dt) {
   if (banner) {
     banner.age += dt;
     if (banner.age > 2.6) banner = null;
+  }
+  if (toastMsg) {
+    toastMsg.age += dt;
+    if (toastMsg.age > 4.2) toastMsg = null;
   }
   shake = Math.max(0, shake - dt);
   flash = Math.max(0, flash - dt);
@@ -1328,6 +1457,60 @@ function drawGlideCorridors() {
   ctx.restore();
 }
 
+function drawClosures() {
+  for (const rw of runways) {
+    if (rw.kind !== 'strip' || !rw.closed) continue;
+    ctx.save();
+    ctx.translate(rw.x, rw.y);
+    ctx.rotate(rw.angle);
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = 'rgba(180, 20, 10, 0.4)';
+    ctx.fillRect(-rw.len / 2, -rw.wid / 2, rw.len, rw.wid);
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = '#ff3b28';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(-rw.len / 2 + 12, -rw.wid / 2 + 4); ctx.lineTo(rw.len / 2 - 12, rw.wid / 2 - 4);
+    ctx.moveTo(rw.len / 2 - 12, -rw.wid / 2 + 4); ctx.lineTo(-rw.len / 2 + 12, rw.wid / 2 - 4);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawToast() {
+  if (!toastMsg) return;
+  const t = toastMsg.age / 4.2;
+  const a = t < 0.12 ? t / 0.12 : t > 0.8 ? (1 - t) / 0.2 : 1;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, a) * 0.95;
+  ctx.font = '700 15px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const y = H - 74;
+  const w = Math.min(W - 40, ctx.measureText(toastMsg.text).width + 40);
+  ctx.fillStyle = 'rgba(18,24,34,0.82)';
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(W / 2 - w / 2, y - 20, w, 40, 20); ctx.fill(); }
+  else { ctx.fillRect(W / 2 - w / 2, y - 20, w, 40); }
+  ctx.fillStyle = '#fff';
+  ctx.fillText(toastMsg.text, W / 2, y);
+  ctx.restore();
+}
+
+function drawFollowLink(p) {
+  const lead = p.followTarget;
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([3, 5]);
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y);
+  ctx.lineTo(lead.x, lead.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 function drawWindsock() {
   const w = airport.wind;
   if (!w) return;
@@ -1461,6 +1644,8 @@ function render() {
   const inPlay = state === 'play' || state === 'paused' || state === 'crash' || state === 'stagec';
   if (inPlay) {
     drawGlideCorridors();
+    drawClosures();
+    for (const p of planes) if (p.followTarget) drawFollowLink(p);
     for (const p of planes) drawPath(p);
     for (const p of planes) if (p.hold && !p.path.length && !p.landing) drawHoldRing(p);
     for (const p of planes) drawTrail(p);
@@ -1496,7 +1681,7 @@ function render() {
   drawClouds();
   drawRain();
   drawWindsock();
-  if (inPlay) drawBanner();
+  if (inPlay) { drawBanner(); drawToast(); }
 
   if (flash > 0) {
     ctx.save();
@@ -1551,6 +1736,7 @@ canvas.addEventListener('pointermove', e => {
   if (!active._moved && Math.hypot(pos.x - active._downPos.x, pos.y - active._downPos.y) > 10) {
     active._moved = true;
     active.hold = false;
+    active.followTarget = null; // a fresh manual drag cancels any auto-follow
     if (active.landing) {
       // go-around: abort the approach and take manual control again
       active.landing = null;
@@ -1613,6 +1799,14 @@ function endDrag() {
       if (active.path.length) active.path[active.path.length - 1] = { x: snap.x, y: snap.y };
       else active.path.push({ x: snap.x, y: snap.y });
       if (tryLand(active)) SFX.confirm();
+    } else {
+      const lead = findFollowTarget(active, active.path[active.path.length - 1] || active);
+      if (lead) {
+        active.followTarget = lead;
+        popups.push({ x: active.x, y: active.y - 24, text: 'FOLLOWING ⟶', age: 0.3 });
+        SFX.confirm();
+        firstTimeToast('follow', '🔗 Sequenced — it will auto-follow and land right behind the lead aircraft.');
+      }
     }
   }
   active._oldPath = null;
@@ -1632,7 +1826,7 @@ function loadCleared() {
 }
 
 function airportLocked(k) {
-  if (k !== 'CDG' && k !== 'RND') return false;
+  if (k !== 'CDG' && k !== 'DEN' && k !== 'RND') return false;
   const c = loadCleared();
   return !['SFO', 'JFK', 'LHR'].every(a => c.has(a));
 }
@@ -1738,6 +1932,7 @@ bindToggle('emergBtn', 'emerg');
 bindToggle('assistBtn', 'assist');
 bindToggle('comboBtn', 'combo');
 bindToggle('glideBtn', 'glide');
+bindToggle('closuresBtn', 'closures');
 
 bindToggle('cbBtn', 'cb', renderField); // runway markers live on the cached ground layer
 bindToggle('touchBtn', 'bigTouch');
@@ -1764,6 +1959,8 @@ function reset() {
   spawnT = 0.6; shake = 0; flash = 0; lastBeep = -9;
   rushT = rand(35, 60); burstLeft = 0; banner = null;
   emergT = rand(30, 55); comboN = 0; lastLandT = -99;
+  closureT = rand(60, 90); closedRw = null; closuresThisRun = 0; lastClosedRw = null;
+  toastShown = new Set(); toastMsg = null;
   active = null;
   airportIdx = Math.max(0, AIRPORT_ORDER.indexOf(cfg.apt));
   updateHud();
@@ -1811,6 +2008,33 @@ function goToMenu() {
   renderLB($('lbMenu'));
   updateHud();
 }
+
+function applyJustPlay() {
+  Object.assign(cfg, {
+    pace: 'relaxed', practice: true, tcas: true,
+    emerg: false, assist: false, combo: false, closures: false,
+    glide: true, bigTouch: true,
+  });
+  saveCfg();
+  reflectPace(cfg.pace);
+  reflectPractice(cfg.practice ? 'on' : 'off');
+  $('tcasBtn').classList.toggle('on', cfg.tcas);
+  $('emergBtn').classList.toggle('on', cfg.emerg);
+  $('assistBtn').classList.toggle('on', cfg.assist);
+  $('comboBtn').classList.toggle('on', cfg.combo);
+  $('closuresBtn').classList.toggle('on', cfg.closures);
+  $('glideBtn').classList.toggle('on', cfg.glide);
+  $('touchBtn').classList.toggle('on', cfg.bigTouch);
+  startGame();
+}
+$('justPlayBtn').addEventListener('click', applyJustPlay);
+$('advToggle').addEventListener('click', () => {
+  SFX.init();
+  SFX.click();
+  const panel = $('cfgPanel');
+  panel.classList.toggle('hidden');
+  $('advToggle').textContent = panel.classList.contains('hidden') ? '⚙ ADVANCED OPTIONS ▾' : '⚙ ADVANCED OPTIONS ▴';
+});
 
 $('startBtn').addEventListener('click', startGame);
 $('restartBtn').addEventListener('click', () => {
@@ -1909,6 +2133,7 @@ $('emergBtn').classList.toggle('on', cfg.emerg);
 $('assistBtn').classList.toggle('on', cfg.assist);
 $('comboBtn').classList.toggle('on', cfg.combo);
 $('glideBtn').classList.toggle('on', cfg.glide);
+$('closuresBtn').classList.toggle('on', cfg.closures);
 refreshLocks();
 renderLB($('lbMenu'));
 resolveScene();
@@ -1940,7 +2165,7 @@ requestAnimationFrame(frame);
 /* ---------------- headless / test hooks ---------------- */
 // ?play auto-starts · ?ff=N fast-forwards N seconds · &autoland bot-lands
 // &apt=JFK forces an airport · &stages=50 forces stage mode · &glide forces
-// glide path corridors on · &debug → title
+// glide path corridors on · &closures forces runway closures on · &debug → title
 const _qs = new URLSearchParams(location.search);
 if (_qs.has('apt')) setAirport(_qs.get('apt'));
 if (_qs.has('stages')) {
@@ -1954,6 +2179,7 @@ if (_qs.has('scene')) { cfg.scene = _qs.get('scene'); resolveScene(); }
 if (_qs.has('noemerg')) cfg.emerg = false;
 if (_qs.has('assist')) cfg.assist = true;
 if (_qs.has('glide')) cfg.glide = true;
+if (_qs.has('closures')) cfg.closures = true;
 if (_qs.has('play')) startGame();
 if (_qs.has('ff')) {
   const secs = +_qs.get('ff') || 10;
