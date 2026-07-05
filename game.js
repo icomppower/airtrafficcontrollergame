@@ -105,6 +105,7 @@ function instantiateAirport(key) {
 /* ---------------- state ---------------- */
 
 let W = 0, H = 0, DPR = 1;
+let PLAY = { l: 0, r: 0, t: 0, b: 0 };
 let state = 'menu'; // menu | play | paused | crash | over | stagec
 let planes = [], popups = [], explosions = [], clouds = [], runways = [];
 let tcasPairs = [];
@@ -121,7 +122,7 @@ let field = null;
 let cfg = {
   apt: 'SFO', mode: 'endless', target: 200, tcas: true, practice: false,
   pace: 'normal', cb: false, bigTouch: false,
-  scene: 'day', emerg: true, assist: false, combo: true,
+  scene: 'day', emerg: true, assist: false, combo: true, glide: false,
 };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('atc-cfg') || '{}')); } catch (e) {}
 let airport = null;
@@ -158,6 +159,15 @@ function layoutAirport() {
       wid: st.type === 'jet' ? 36 : 27,
       num: st.num,
     });
+  }
+  const CORR = Math.max(W, H) * 0.85;
+  for (const rw of runways) {
+    const dirx = Math.cos(rw.angle), diry = Math.sin(rw.angle);
+    rw.corridors = [1, -1].map(sign => ({
+      sign,
+      tx: rw.x + dirx * sign * rw.len / 2, ty: rw.y + diry * sign * rw.len / 2,
+      farx: rw.x + dirx * sign * (rw.len / 2 + CORR), fary: rw.y + diry * sign * (rw.len / 2 + CORR),
+    }));
   }
   runways.push({
     kind: 'pad', type: 'heli', color: COLORS.heli,
@@ -481,11 +491,13 @@ function spawnPlane() {
   const type = r < 0.45 ? 'jet' : r < 0.8 ? 'prop' : 'heli';
   const m = 46;
   const side = Math.random() * 4 | 0;
+  const vRange = () => [PLAY.t + (PLAY.b - PLAY.t) * 0.12, PLAY.t + (PLAY.b - PLAY.t) * 0.88];
+  const hRange = () => [PLAY.l + (PLAY.r - PLAY.l) * 0.12, PLAY.l + (PLAY.r - PLAY.l) * 0.88];
   let x, y;
-  if (side === 0) { x = -m; y = rand(H * 0.12, H * 0.88); }
-  else if (side === 1) { x = W + m; y = rand(H * 0.12, H * 0.88); }
-  else if (side === 2) { x = rand(W * 0.12, W * 0.88); y = -m; }
-  else { x = rand(W * 0.12, W * 0.88); y = H + m; }
+  if (side === 0) { x = PLAY.l - m; y = rand(...vRange()); }
+  else if (side === 1) { x = PLAY.r + m; y = rand(...vRange()); }
+  else if (side === 2) { x = rand(...hRange()); y = PLAY.t - m; }
+  else { x = rand(...hRange()); y = PLAY.b + m; }
 
   for (const p of planes) {
     if (!p.done && Math.hypot(p.x - x, p.y - y) < 110) { spawnT = 0.6; return; }
@@ -540,6 +552,67 @@ function tryLand(p) {
         const t1 = { x: rw.x - dirx * sign * rw.len * 0.38, y: rw.y - diry * sign * rw.len * 0.38 };
         p.path.push(t0, t1);
         p.landing = { rw, kind: 'strip', t0, t1, len: Math.hypot(t1.x - t0.x, t1.y - t0.y) };
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// generous "near enough" version of tryLand's hit test — used only at
+// drag-release to forgive a slightly-missed landing attempt
+function findSnapTarget(p, pos) {
+  let best = null, bestD = Infinity;
+  for (const rw of runways) {
+    if (rw.type !== p.type) continue;
+    if (rw.kind === 'pad') {
+      const d = Math.hypot(pos.x - rw.x, pos.y - rw.y);
+      if (d < rw.r + 12 + 55 && d < bestD) { bestD = d; best = { x: rw.x, y: rw.y }; }
+    } else {
+      const dx = pos.x - rw.x, dy = pos.y - rw.y;
+      const ca = Math.cos(-rw.angle), sa = Math.sin(-rw.angle);
+      const lx = dx * ca - dy * sa, ly = dx * sa + dy * ca;
+      if (Math.abs(lx) < rw.len / 2 + 8 + 40 && Math.abs(ly) < rw.wid / 2 + 12 + 30) {
+        const d = Math.hypot(lx, ly);
+        if (d < bestD) {
+          const clx = clamp(lx, -(rw.len / 2 + 7), rw.len / 2 + 7);
+          const cly = clamp(ly, -(rw.wid / 2 + 11), rw.wid / 2 + 11);
+          bestD = d;
+          best = {
+            x: rw.x + clx * Math.cos(rw.angle) - cly * Math.sin(rw.angle),
+            y: rw.y + clx * Math.sin(rw.angle) + cly * Math.cos(rw.angle),
+          };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+// ILS-style capture: touching a runway's extended approach corridor while
+// dragging auto-continues the path onto the centerline and into landing —
+// a drawing shortcut only, no collision immunity beyond normal landing rules
+const GLIDE_HALFW = 34;
+function tryGlideCapture(p) {
+  const pos = p.path[p.path.length - 1];
+  if (!pos) return false;
+  for (const rw of runways) {
+    if (rw.kind !== 'strip' || rw.type !== p.type) continue;
+    for (const c of rw.corridors) {
+      const dx = c.farx - c.tx, dy = c.fary - c.ty;
+      const len2 = dx * dx + dy * dy;
+      const t = clamp(((pos.x - c.tx) * dx + (pos.y - c.ty) * dy) / len2, 0, 1);
+      const cx = c.tx + dx * t, cy = c.ty + dy * t;
+      if (Math.hypot(pos.x - cx, pos.y - cy) < GLIDE_HALFW) {
+        const t0 = { x: c.tx, y: c.ty };
+        const t1 = {
+          x: rw.x - Math.cos(rw.angle) * c.sign * rw.len * 0.38,
+          y: rw.y - Math.sin(rw.angle) * c.sign * rw.len * 0.38,
+        };
+        p.path.push(t0, t1);
+        p.landing = { rw, kind: 'strip', t0, t1, len: Math.hypot(t1.x - t0.x, t1.y - t0.y) };
+        popups.push({ x: pos.x, y: pos.y - 22, text: 'GLIDE CAPTURED ✓', age: 0 });
+        SFX.confirm();
         return true;
       }
     }
@@ -823,7 +896,7 @@ function stageClear() {
   SFX.fanfare();
   SFX.setEngine(0);
   markCleared(airport.key);
-  const nextKey = AIRPORT_ORDER[(airportIdx + 1) % AIRPORT_ORDER.length];
+  const nextKey = AIRPORT_ORDER[nextUnlockedIdx(airportIdx)];
   const nextName = nextKey === 'RND' ? 'Random field 🎲' : `${nextKey} — ${AIRPORTS[nextKey].name}`;
   $('stageNum').textContent = stage;
   $('nextAptName').textContent = 'Next: ' + nextName;
@@ -835,7 +908,7 @@ function stageClear() {
 function nextStage() {
   SFX.click();
   stage++;
-  airportIdx = (airportIdx + 1) % AIRPORT_ORDER.length;
+  airportIdx = nextUnlockedIdx(airportIdx);
   airport = instantiateAirport(AIRPORT_ORDER[airportIdx]);
   layoutAirport();
   resolveScene();
@@ -1197,7 +1270,7 @@ function drawTcasPairs() {
 function drawEdgeMarker(p) {
   const m = 18;
   if (p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H) return;
-  const cx = clamp(p.x, m, W - m), cy = clamp(p.y, m, H - m);
+  const cx = clamp(p.x, PLAY.l + m, PLAY.r - m), cy = clamp(p.y, PLAY.t + m, PLAY.b - m);
   const ang = Math.atan2(p.y - cy, p.x - cx);
   const pulse = 1 + 0.12 * Math.sin(elapsed * 8);
   ctx.save();
@@ -1231,6 +1304,26 @@ function drawHoldRing(p) {
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, TAU);
   ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawGlideCorridors() {
+  if (!cfg.glide) return;
+  ctx.save();
+  ctx.globalAlpha = 0.14;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([10, 10]);
+  for (const rw of runways) {
+    if (rw.kind !== 'strip') continue;
+    ctx.strokeStyle = rw.color;
+    for (const c of rw.corridors) {
+      ctx.beginPath();
+      ctx.moveTo(c.tx, c.ty);
+      ctx.lineTo(c.farx, c.fary);
+      ctx.stroke();
+    }
+  }
   ctx.setLineDash([]);
   ctx.restore();
 }
@@ -1367,6 +1460,7 @@ function render() {
 
   const inPlay = state === 'play' || state === 'paused' || state === 'crash' || state === 'stagec';
   if (inPlay) {
+    drawGlideCorridors();
     for (const p of planes) drawPath(p);
     for (const p of planes) if (p.hold && !p.path.length && !p.landing) drawHoldRing(p);
     for (const p of planes) drawTrail(p);
@@ -1380,6 +1474,18 @@ function render() {
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(active.x, active.y, 26, 0, TAU); ctx.stroke();
+      ctx.restore();
+    }
+    if (active && active._snapHint) {
+      const s = active._snapHint;
+      const pulse = 1 + 0.15 * Math.sin(elapsed * 10);
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = COLORS[active.type];
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([5, 6]);
+      ctx.beginPath(); ctx.arc(s.x, s.y, 16 * pulse, 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
       ctx.restore();
     }
     for (const p of planes) drawEdgeMarker(p);
@@ -1454,10 +1560,13 @@ canvas.addEventListener('pointermove', e => {
       SFX.blip();
     }
   }
+  if (active.landing) return; // captured a glide path corridor — riding the rails now
   const last = active.path[active.path.length - 1] || active;
   if (Math.hypot(pos.x - last.x, pos.y - last.y) > 7) {
     active.path.push(pos);
+    if (cfg.glide) tryGlideCapture(active);
   }
+  if (!active.landing) active._snapHint = findSnapTarget(active, pos);
 });
 
 function cycleSpeed(p) {
@@ -1493,10 +1602,21 @@ function endDrag() {
         lastTap = { p: active, t: now };
       }
     }
+  } else if (active.landing) {
+    // already captured a glide path corridor mid-drag
+    SFX.confirm();
   } else if (tryLand(active)) {
     SFX.confirm();
+  } else {
+    const snap = findSnapTarget(active, active.path[active.path.length - 1] || active);
+    if (snap) {
+      if (active.path.length) active.path[active.path.length - 1] = { x: snap.x, y: snap.y };
+      else active.path.push({ x: snap.x, y: snap.y });
+      if (tryLand(active)) SFX.confirm();
+    }
   }
   active._oldPath = null;
+  active._snapHint = null;
   active = null;
 }
 canvas.addEventListener('pointerup', endDrag);
@@ -1524,6 +1644,17 @@ function refreshLocks() {
     b.classList.toggle('locked', locked);
     b.textContent = (locked ? '🔒 ' : '') + (k === 'RND' ? '🎲 RANDOM' : k);
   }
+}
+
+// advances past any still-locked airport so stage progression can never
+// hand the player CDG/RND before they've actually cleared SFO+JFK+LHR
+function nextUnlockedIdx(fromIdx) {
+  let idx = fromIdx;
+  for (let i = 0; i < AIRPORT_ORDER.length; i++) {
+    idx = (idx + 1) % AIRPORT_ORDER.length;
+    if (!airportLocked(AIRPORT_ORDER[idx])) return idx;
+  }
+  return (fromIdx + 1) % AIRPORT_ORDER.length;
 }
 
 function markCleared(code) {
@@ -1606,6 +1737,7 @@ function bindToggle(id, key, onChange) {
 bindToggle('emergBtn', 'emerg');
 bindToggle('assistBtn', 'assist');
 bindToggle('comboBtn', 'combo');
+bindToggle('glideBtn', 'glide');
 
 bindToggle('cbBtn', 'cb', renderField); // runway markers live on the cached ground layer
 bindToggle('touchBtn', 'bigTouch');
@@ -1736,18 +1868,32 @@ if (airportLocked(cfg.apt)) cfg.apt = 'SFO'; // saved airport may have been from
 airport = instantiateAirport(cfg.apt);
 airportIdx = Math.max(0, AIRPORT_ORDER.indexOf(cfg.apt));
 
+function safeInset(varName) {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(varName)) || 0;
+}
+
 function resize() {
-  W = window.innerWidth;
-  H = window.innerHeight;
+  const vv = window.visualViewport;
+  W = vv ? vv.width : window.innerWidth;
+  H = vv ? vv.height : window.innerHeight;
   DPR = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.ceil(W * DPR);
   canvas.height = Math.ceil(H * DPR);
+  const pad = 8;
+  PLAY = {
+    l: safeInset('--sal') + pad, r: W - safeInset('--sar') - pad,
+    t: safeInset('--sat') + pad, b: H - safeInset('--sab') - pad,
+  };
   layoutAirport();
   renderField();
   makeRain();
   if (!clouds.length) makeClouds();
 }
 window.addEventListener('resize', resize);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', resize);
+  window.visualViewport.addEventListener('scroll', resize);
+}
 resize();
 
 // reflect saved config in the menu
@@ -1762,6 +1908,7 @@ $('touchBtn').classList.toggle('on', cfg.bigTouch);
 $('emergBtn').classList.toggle('on', cfg.emerg);
 $('assistBtn').classList.toggle('on', cfg.assist);
 $('comboBtn').classList.toggle('on', cfg.combo);
+$('glideBtn').classList.toggle('on', cfg.glide);
 refreshLocks();
 renderLB($('lbMenu'));
 resolveScene();
@@ -1792,7 +1939,8 @@ requestAnimationFrame(frame);
 
 /* ---------------- headless / test hooks ---------------- */
 // ?play auto-starts · ?ff=N fast-forwards N seconds · &autoland bot-lands
-// &apt=JFK forces an airport · &stages=50 forces stage mode · &debug → title
+// &apt=JFK forces an airport · &stages=50 forces stage mode · &glide forces
+// glide path corridors on · &debug → title
 const _qs = new URLSearchParams(location.search);
 if (_qs.has('apt')) setAirport(_qs.get('apt'));
 if (_qs.has('stages')) {
@@ -1805,6 +1953,7 @@ if (_qs.has('cb')) { cfg.cb = true; renderField(); }
 if (_qs.has('scene')) { cfg.scene = _qs.get('scene'); resolveScene(); }
 if (_qs.has('noemerg')) cfg.emerg = false;
 if (_qs.has('assist')) cfg.assist = true;
+if (_qs.has('glide')) cfg.glide = true;
 if (_qs.has('play')) startGame();
 if (_qs.has('ff')) {
   const secs = +_qs.get('ff') || 10;
