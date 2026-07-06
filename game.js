@@ -203,7 +203,20 @@ function layoutAirport() {
       const fixDist = corr * 0.8;
       const fix = { x: tx + rx * fixDist, y: ty + ry * fixDist };
       const bend = { x: tx + rx * fixDist * 0.55, y: ty + ry * fixDist * 0.55 };
-      return { sign, tx, ty, ix, iy, fix, bend };
+      // sampled points along fix -> curve -> intercept -> threshold, used so
+      // a dragged path can capture by touching ANY point along the visible
+      // glide path, not just the fix marker itself
+      const TURN_SAMPLES = 9;
+      const capturePts = [fix];
+      for (let i = 1; i <= TURN_SAMPLES; i++) {
+        const t = i / TURN_SAMPLES, mt = 1 - t;
+        capturePts.push({
+          x: mt * mt * fix.x + 2 * mt * t * bend.x + t * t * ix,
+          y: mt * mt * fix.y + 2 * mt * t * bend.y + t * t * iy,
+        });
+      }
+      capturePts.push({ x: tx, y: ty });
+      return { sign, tx, ty, ix, iy, fix, bend, capturePts };
     };
     // ILS only serves one direction per runway. Pick whichever of the two
     // ends puts its fix furthest inside the screen — edge-of-map runways
@@ -647,11 +660,20 @@ function findFollowTarget(p, pos) {
   return best;
 }
 
-// ILS-style capture: dragging onto a fix offset to one side of a runway's
-// final approach course triggers a limited turn back onto the centerline and
-// into landing — a drawing shortcut only, no collision immunity beyond
-// normal landing rules (see checkConflicts / the path.length <= 1 dist checks)
-const FIX_R = 22;
+// distance from point (px,py) to segment (ax,ay)-(bx,by)
+function pointSegDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1) : 0;
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+}
+
+// ILS-style capture: touching ANY point along the visible glide path (fix
+// marker, curve, or final band) auto-continues the aircraft along the rest
+// of that same path into landing — a drawing shortcut only, no collision
+// immunity beyond normal landing rules (see checkConflicts / the
+// path.length <= 1 dist checks)
+const GLIDE_TOL = 20;
 const GLIDE_HALFW = 15;
 function tryGlideCapture(p) {
   const pos = p.path[p.path.length - 1];
@@ -659,29 +681,24 @@ function tryGlideCapture(p) {
   for (const rw of runways) {
     if (rw.kind !== 'strip' || rw.type !== p.type || rw.closed) continue;
     for (const c of rw.corridors) {
-      if (Math.hypot(pos.x - c.fix.x, pos.y - c.fix.y) >= FIX_R) continue;
-      const t0 = { x: c.tx, y: c.ty };
+      const pts = c.capturePts;
+      let hitAt = -1;
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (pointSegDist(pos.x, pos.y, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) < GLIDE_TOL) { hitAt = i; break; }
+      }
+      if (hitAt < 0) continue;
       const t1 = {
         x: rw.x - Math.cos(rw.angle) * c.sign * rw.len * 0.38,
         y: rw.y - Math.sin(rw.angle) * c.sign * rw.len * 0.38,
       };
-      // curved turn from the fix onto final — a limited-radius arc instead
-      // of an instant heading snap, so it reads as a real turn
-      const STEPS = 9;
-      const turn = [];
-      for (let i = 1; i <= STEPS; i++) {
-        const t = i / STEPS, mt = 1 - t;
-        turn.push({
-          x: mt * mt * c.fix.x + 2 * mt * t * c.bend.x + t * t * c.ix,
-          y: mt * mt * c.fix.y + 2 * mt * t * c.bend.y + t * t * c.iy,
-        });
-      }
-      p.path.push(...turn, t0, t1);
-      p.landing = { rw, kind: 'strip', t0, t1, len: Math.hypot(t1.x - t0.x, t1.y - t0.y) };
-      popups.push({ x: pos.x, y: pos.y - 22, text: 'ILS FIX CAPTURED ✓', age: 0 });
+      // continue from wherever along the path it was touched, not from the fix
+      const remainder = pts.slice(hitAt + 1);
+      p.path.push(...remainder, t1);
+      p.landing = { rw, kind: 'strip', t0: { x: c.tx, y: c.ty }, t1, len: Math.hypot(t1.x - c.tx, t1.y - c.ty) };
+      popups.push({ x: pos.x, y: pos.y - 22, text: 'ILS PATH CAPTURED ✓', age: 0 });
       SFX.confirm();
       SFX.radioCall();
-      firstTimeToast('glide', '🛬 ILS fix captured — the aircraft turns onto final and continues to the runway.');
+      firstTimeToast('glide', '🛬 ILS path captured — touch the glide path anywhere to auto-continue onto final.');
       return true;
     }
   }
@@ -1524,7 +1541,8 @@ function drawGlideCorridors() {
       ctx.quadraticCurveTo(c.bend.x, c.bend.y, c.ix, c.iy);
       ctx.stroke();
       ctx.setLineDash([]);
-      // the ILS fix marker — a diamond with its capture radius shown faintly
+      // the ILS fix marker — a diamond; the whole path (curve + band) is
+      // touchable, not just this point, so no separate capture ring is drawn
       ctx.globalAlpha = 0.9;
       ctx.fillStyle = rw.color;
       const r = 7;
@@ -1535,12 +1553,6 @@ function drawGlideCorridors() {
       ctx.lineTo(c.fix.x - r, c.fix.y);
       ctx.closePath();
       ctx.fill();
-      ctx.globalAlpha = 0.25;
-      ctx.strokeStyle = rw.color;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(c.fix.x, c.fix.y, FIX_R, 0, TAU);
-      ctx.stroke();
       ctx.restore();
     }
   }
