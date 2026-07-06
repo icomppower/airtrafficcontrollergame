@@ -188,7 +188,7 @@ function layoutAirport() {
   for (const rw of runways) {
     const dirx = Math.cos(rw.angle), diry = Math.sin(rw.angle);
     const corr = rw.len * 1.3; // a short final-approach stretch, not most of the map
-    rw.corridors = [1, -1].map(sign => {
+    const buildCorridor = sign => {
       const tx = rw.x + dirx * sign * rw.len / 2, ty = rw.y + diry * sign * rw.len / 2;
       const ox = dirx * sign, oy = diry * sign; // outbound unit vector, away from the runway
       const interceptAlong = corr * 0.4; // distance from threshold where the turn rolls out onto centerline
@@ -200,10 +200,19 @@ function layoutAirport() {
       const theta = 0.85; // ~49 degrees
       const rx = ox * Math.cos(theta) - oy * Math.sin(theta);
       const ry = ox * Math.sin(theta) + oy * Math.cos(theta);
-      const fix = { x: tx + rx * corr, y: ty + ry * corr };
-      const bend = { x: tx + rx * corr * 0.55, y: ty + ry * corr * 0.55 };
+      const fixDist = corr * 0.8;
+      const fix = { x: tx + rx * fixDist, y: ty + ry * fixDist };
+      const bend = { x: tx + rx * fixDist * 0.55, y: ty + ry * fixDist * 0.55 };
       return { sign, tx, ty, ix, iy, fix, bend };
-    });
+    };
+    // ILS only serves one direction per runway. Pick whichever of the two
+    // ends puts its fix furthest inside the screen — edge-of-map runways
+    // can't always fit both fully on screen, so this is a screen-fit
+    // choice, not tied to which end the runway number is painted on.
+    const margin = 20;
+    const outOfBounds = c => Math.max(0, margin - c.fix.x, c.fix.x - (W - margin), margin - c.fix.y, c.fix.y - (H - margin));
+    const candidates = [buildCorridor(-1), buildCorridor(1)];
+    rw.corridors = [candidates.sort((a, b) => outOfBounds(a) - outOfBounds(b))[0]];
   }
   runways.push({
     kind: 'pad', type: 'heli', color: COLORS.heli,
@@ -1537,6 +1546,47 @@ function drawGlideCorridors() {
   }
 }
 
+// a small tower + directional arrow beside the threshold, so it's visible at
+// a glance which single direction each runway's ILS actually serves
+function drawILSTowers() {
+  if (!cfg.glide) return;
+  for (const rw of runways) {
+    if (rw.kind !== 'strip' || !rw.corridors.length) continue;
+    const c = rw.corridors[0];
+    const dx = c.tx - c.ix, dy = c.ty - c.iy;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) continue;
+    const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
+    // offset beside the runway edge, level with the threshold it serves
+    const tox = c.tx + nx * (rw.wid / 2 + 16) - ux * 10;
+    const toy = c.ty + ny * (rw.wid / 2 + 16) - uy * 10;
+    ctx.save();
+    ctx.translate(tox, toy);
+    ctx.fillStyle = '#2b2f36';
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -11); ctx.lineTo(5, 8); ctx.lineTo(-5, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    const pulse = 0.5 + 0.5 * Math.sin(elapsed * 4);
+    ctx.globalAlpha = 0.5 + 0.5 * pulse;
+    ctx.fillStyle = rw.color;
+    ctx.beginPath();
+    ctx.arc(0, -11, 3, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 0.85;
+    // arrow along the runway centerline direction, pointing at the served threshold
+    ctx.rotate(Math.atan2(uy, ux));
+    ctx.beginPath();
+    ctx.moveTo(18, 0); ctx.lineTo(5, 5); ctx.lineTo(5, -5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 function drawClosures() {
   for (const rw of runways) {
     if (rw.kind !== 'strip' || !rw.closed) continue;
@@ -1724,6 +1774,7 @@ function render() {
   const inPlay = state === 'play' || state === 'paused' || state === 'crash' || state === 'stagec';
   if (inPlay) {
     drawGlideCorridors();
+    drawILSTowers();
     drawClosures();
     for (const p of planes) if (p.followTarget) drawFollowLink(p);
     for (const p of planes) drawPath(p);
