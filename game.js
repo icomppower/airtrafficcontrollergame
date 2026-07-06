@@ -1980,7 +1980,9 @@ function refreshLocks() {
     const k = b.dataset.k;
     const locked = airportLocked(k);
     b.classList.toggle('locked', locked);
+    const icon = b.querySelector('.help-icon'); // textContent below would wipe it out
     b.textContent = (locked ? '🔒 ' : '') + (k === 'RND' ? '🎲 RANDOM' : k);
+    if (icon) b.appendChild(icon);
   }
 }
 
@@ -2080,6 +2082,42 @@ bindToggle('closuresBtn', 'closures');
 
 bindToggle('cbBtn', 'cb', renderField); // runway markers live on the cached ground layer
 bindToggle('touchBtn', 'bigTouch');
+
+// menu help tooltips — a small (i) badge on every [data-help] option, shown
+// on click/tap only (same interaction on desktop and mobile, no hover-only
+// path), so players can learn what a system does before turning it on
+function initHelpTooltips() {
+  const pop = document.createElement('div');
+  pop.className = 'help-pop hidden';
+  document.body.appendChild(pop);
+
+  document.querySelectorAll('[data-help]').forEach(el => {
+    const icon = document.createElement('span');
+    icon.className = 'help-icon';
+    icon.textContent = 'i';
+    el.appendChild(icon);
+  });
+
+  let active = null;
+  function hide() { pop.classList.add('hidden'); active = null; }
+  document.addEventListener('click', e => {
+    const icon = e.target.closest('.help-icon');
+    if (!icon) { hide(); return; }
+    e.preventDefault();
+    e.stopPropagation();
+    if (active === icon) { hide(); return; }
+    active = icon;
+    pop.textContent = icon.parentElement.dataset.help;
+    pop.classList.remove('hidden');
+    const r = icon.getBoundingClientRect();
+    const pr = pop.getBoundingClientRect();
+    const left = clamp(r.left + r.width / 2 - pr.width / 2, 8, window.innerWidth - pr.width - 8);
+    const top = Math.min(r.bottom + 8, window.innerHeight - pr.height - 8);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+  }, true);
+}
+initHelpTooltips();
 
 /* ---------------- flow control ---------------- */
 

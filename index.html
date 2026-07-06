@@ -42,52 +42,52 @@
       <div class="cfg hidden" id="cfgPanel">
         <div class="cfg-label">AIRPORT</div>
         <div class="cfg-row" id="airportSel">
-          <button class="sel on" data-k="SFO">SFO</button>
-          <button class="sel" data-k="JFK">JFK</button>
-          <button class="sel" data-k="LHR">LHR</button>
-          <button class="sel" data-k="CDG">CDG</button>
-          <button class="sel" data-k="DEN">DEN</button>
-          <button class="sel" data-k="RND">🎲 RANDOM</button>
+          <button class="sel on" data-k="SFO" data-help="Crossing runway pairs (28L/28R × 1R) with bay water to the east.">SFO</button>
+          <button class="sel" data-k="JFK" data-help="Staggered parallel runways (31L/31R) plus a crossing runway (4L), Jamaica Bay to the south.">JFK</button>
+          <button class="sel" data-k="LHR" data-help="Two long parallel runways (27L/27R) — the simplest layout, good for learning.">LHR</button>
+          <button class="sel" data-k="CDG" data-help="Four runways in two parallel pairs (9L/9R and 8L/8R). Locked until you clear a Stage-mode run at SFO, JFK, and LHR.">CDG</button>
+          <button class="sel" data-k="DEN" data-help="Six runways radiating from a shared hub, pinwheel-style. Locked until you clear a Stage-mode run at SFO, JFK, and LHR.">DEN</button>
+          <button class="sel" data-k="RND" data-help="A freshly generated layout every time — runway count, angles, and shoreline are randomized. Locked until you clear a Stage-mode run at SFO, JFK, and LHR.">🎲 RANDOM</button>
         </div>
         <div class="apt-name" id="aptName">San Francisco International</div>
         <div class="cfg-label">SHIFT TYPE</div>
         <div class="cfg-row" id="modeSel">
-          <button class="sel on" data-m="endless">NON-STOP</button>
-          <button class="sel" data-m="stages">STAGES</button>
+          <button class="sel on" data-m="endless" data-help="Endless shift — survive as long as you can, no target to hit.">NON-STOP</button>
+          <button class="sel" data-m="stages" data-help="Land a target number of aircraft to clear the stage and advance to the next airport, with a difficulty step-up each time.">STAGES</button>
         </div>
         <div class="cfg-row hidden" id="targetSel">
-          <button class="sel" data-t="50">50 ✈</button>
-          <button class="sel" data-t="100">100 ✈</button>
-          <button class="sel on" data-t="200">200 ✈</button>
+          <button class="sel" data-t="50" data-help="Clear this stage after landing 50 aircraft.">50 ✈</button>
+          <button class="sel" data-t="100" data-help="Clear this stage after landing 100 aircraft.">100 ✈</button>
+          <button class="sel on" data-t="200" data-help="Clear this stage after landing 200 aircraft.">200 ✈</button>
         </div>
         <div class="cfg-label">PACE</div>
         <div class="cfg-row" id="paceSel">
-          <button class="sel on" data-pc="normal">NORMAL</button>
-          <button class="sel" data-pc="relaxed">RELAXED</button>
+          <button class="sel on" data-pc="normal" data-help="Standard aircraft speed and spawn rate.">NORMAL</button>
+          <button class="sel" data-pc="relaxed" data-help="~20% slower aircraft, sparser spawns, and earlier/wider TCAS warnings — for learning routing without the pressure.">RELAXED</button>
         </div>
         <div class="cfg-label">SCENE</div>
         <div class="cfg-row" id="sceneSel">
-          <button class="sel on" data-sc="day">☀ DAY</button>
-          <button class="sel" data-sc="night">🌙 NIGHT</button>
-          <button class="sel" data-sc="rain">🌧 RAIN</button>
-          <button class="sel" data-sc="random">🎲</button>
+          <button class="sel on" data-sc="day" data-help="Standard daytime visibility.">☀ DAY</button>
+          <button class="sel" data-sc="night" data-help="Runway edge lights, aircraft glow halos, and blinking nav lights — same gameplay, moodier visuals.">🌙 NIGHT</button>
+          <button class="sel" data-sc="rain" data-help="Animated rain streaks and an overcast tint — cosmetic only, no gameplay effect.">🌧 RAIN</button>
+          <button class="sel" data-sc="random" data-help="Rolls a random scene (day/night/rain) at the start of each run or stage.">🎲</button>
         </div>
         <div class="cfg-label">CRASHES</div>
         <div class="cfg-row" id="practiceSel">
-          <button class="sel on" data-p="off">MAYDAY ENDS RUN</button>
-          <button class="sel" data-p="on">PRACTICE — KEEP FLYING</button>
+          <button class="sel on" data-p="off" data-help="Classic rules — any collision ends the run immediately.">MAYDAY ENDS RUN</button>
+          <button class="sel" data-p="on" data-help="Collisions still explode and cost −150 points, but the run keeps going — good for drilling routing without resets.">PRACTICE — KEEP FLYING</button>
         </div>
         <div class="cfg-label">OPTIONS</div>
         <div class="cfg-row">
-          <button class="sel on" id="emergBtn">⛽ EMERGENCIES</button>
-          <button class="sel" id="assistBtn">🤖 AUTO-AVOID</button>
-          <button class="sel on" id="comboBtn">🔥 COMBOS</button>
-          <button class="sel" id="glideBtn">🛬 GLIDE PATHS</button>
-          <button class="sel" id="closuresBtn">🚧 RUNWAY CLOSURES</button>
+          <button class="sel on" id="emergBtn" data-help="Aircraft randomly declare low fuel — land them in time for ×2 points, or they go down.">⛽ EMERGENCIES</button>
+          <button class="sel" id="assistBtn" data-help="When TCAS detects a collision course, it automatically slows the faster of the two aircraft until the conflict clears.">🤖 AUTO-AVOID</button>
+          <button class="sel on" id="comboBtn" data-help="Landing aircraft within 6 seconds of each other builds a score multiplier up to ×5. Any crash resets it.">🔥 COMBOS</button>
+          <button class="sel" id="glideBtn" data-help="Shows an ILS fix and curved final-approach path for one direction of each runway — touch the path anywhere to auto-continue the aircraft onto final and land. Assistance only, no collision immunity.">🛬 GLIDE PATHS</button>
+          <button class="sel" id="closuresBtn" data-help="Runways occasionally close for a stretch — more likely on a runway facing a strong crosswind — then reopen, always with advance warning.">🚧 RUNWAY CLOSURES</button>
         </div>
         <div class="cfg-row">
-          <button class="sel" id="cbBtn">👁 COLORBLIND MARKERS</button>
-          <button class="sel" id="touchBtn">🎯 BIG TOUCH TARGETS</button>
+          <button class="sel" id="cbBtn" data-help="Adds shape badges (▲ jet · ■ prop · ● heli) everywhere color normally carries meaning.">👁 COLORBLIND MARKERS</button>
+          <button class="sel" id="touchBtn" data-help="Enlarges the drag-pick radius around aircraft — easier to grab on small touchscreens.">🎯 BIG TOUCH TARGETS</button>
         </div>
       </div>
 
