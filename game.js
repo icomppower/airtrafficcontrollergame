@@ -188,11 +188,22 @@ function layoutAirport() {
   for (const rw of runways) {
     const dirx = Math.cos(rw.angle), diry = Math.sin(rw.angle);
     const corr = rw.len * 1.3; // a short final-approach stretch, not most of the map
-    rw.corridors = [1, -1].map(sign => ({
-      sign,
-      tx: rw.x + dirx * sign * rw.len / 2, ty: rw.y + diry * sign * rw.len / 2,
-      farx: rw.x + dirx * sign * (rw.len / 2 + corr), fary: rw.y + diry * sign * (rw.len / 2 + corr),
-    }));
+    rw.corridors = [1, -1].map(sign => {
+      const tx = rw.x + dirx * sign * rw.len / 2, ty = rw.y + diry * sign * rw.len / 2;
+      const ox = dirx * sign, oy = diry * sign; // outbound unit vector, away from the runway
+      const interceptAlong = corr * 0.4; // distance from threshold where the turn rolls out onto centerline
+      const ix = tx + ox * interceptAlong, iy = ty + oy * interceptAlong;
+      // ILS fix: same distance out from the threshold as the old straight
+      // corridor's far point, just rotated to one side — requires a real
+      // turn onto final instead of a straight run-in, but stays just as
+      // close to the airport as the corridor it replaces
+      const theta = 0.85; // ~49 degrees
+      const rx = ox * Math.cos(theta) - oy * Math.sin(theta);
+      const ry = ox * Math.sin(theta) + oy * Math.cos(theta);
+      const fix = { x: tx + rx * corr, y: ty + ry * corr };
+      const bend = { x: tx + rx * corr * 0.55, y: ty + ry * corr * 0.55 };
+      return { sign, tx, ty, ix, iy, fix, bend };
+    });
   }
   runways.push({
     kind: 'pad', type: 'heli', color: COLORS.heli,
@@ -627,9 +638,11 @@ function findFollowTarget(p, pos) {
   return best;
 }
 
-// ILS-style capture: touching a runway's extended approach corridor while
-// dragging auto-continues the path onto the centerline and into landing —
-// a drawing shortcut only, no collision immunity beyond normal landing rules
+// ILS-style capture: dragging onto a fix offset to one side of a runway's
+// final approach course triggers a limited turn back onto the centerline and
+// into landing — a drawing shortcut only, no collision immunity beyond
+// normal landing rules (see checkConflicts / the path.length <= 1 dist checks)
+const FIX_R = 22;
 const GLIDE_HALFW = 15;
 function tryGlideCapture(p) {
   const pos = p.path[p.path.length - 1];
@@ -637,24 +650,30 @@ function tryGlideCapture(p) {
   for (const rw of runways) {
     if (rw.kind !== 'strip' || rw.type !== p.type || rw.closed) continue;
     for (const c of rw.corridors) {
-      const dx = c.farx - c.tx, dy = c.fary - c.ty;
-      const len2 = dx * dx + dy * dy;
-      const t = clamp(((pos.x - c.tx) * dx + (pos.y - c.ty) * dy) / len2, 0, 1);
-      const cx = c.tx + dx * t, cy = c.ty + dy * t;
-      if (Math.hypot(pos.x - cx, pos.y - cy) < GLIDE_HALFW) {
-        const t0 = { x: c.tx, y: c.ty };
-        const t1 = {
-          x: rw.x - Math.cos(rw.angle) * c.sign * rw.len * 0.38,
-          y: rw.y - Math.sin(rw.angle) * c.sign * rw.len * 0.38,
-        };
-        p.path.push(t0, t1);
-        p.landing = { rw, kind: 'strip', t0, t1, len: Math.hypot(t1.x - t0.x, t1.y - t0.y) };
-        popups.push({ x: pos.x, y: pos.y - 22, text: 'GLIDE CAPTURED ✓', age: 0 });
-        SFX.confirm();
-        SFX.radioCall();
-        firstTimeToast('glide', '🛬 Glide path captured — the aircraft auto-continues onto the runway.');
-        return true;
+      if (Math.hypot(pos.x - c.fix.x, pos.y - c.fix.y) >= FIX_R) continue;
+      const t0 = { x: c.tx, y: c.ty };
+      const t1 = {
+        x: rw.x - Math.cos(rw.angle) * c.sign * rw.len * 0.38,
+        y: rw.y - Math.sin(rw.angle) * c.sign * rw.len * 0.38,
+      };
+      // curved turn from the fix onto final — a limited-radius arc instead
+      // of an instant heading snap, so it reads as a real turn
+      const STEPS = 9;
+      const turn = [];
+      for (let i = 1; i <= STEPS; i++) {
+        const t = i / STEPS, mt = 1 - t;
+        turn.push({
+          x: mt * mt * c.fix.x + 2 * mt * t * c.bend.x + t * t * c.ix,
+          y: mt * mt * c.fix.y + 2 * mt * t * c.bend.y + t * t * c.iy,
+        });
       }
+      p.path.push(...turn, t0, t1);
+      p.landing = { rw, kind: 'strip', t0, t1, len: Math.hypot(t1.x - t0.x, t1.y - t0.y) };
+      popups.push({ x: pos.x, y: pos.y - 22, text: 'ILS FIX CAPTURED ✓', age: 0 });
+      SFX.confirm();
+      SFX.radioCall();
+      firstTimeToast('glide', '🛬 ILS fix captured — the aircraft turns onto final and continues to the runway.');
+      return true;
     }
   }
   return false;
@@ -1441,27 +1460,27 @@ function drawHoldRing(p) {
   ctx.restore();
 }
 
-// draws the actual capture band (its real width, not just an implied
-// centerline) plus inbound chevrons, so it reads as a distinct "glide slope"
-// rather than a vague faint line
+// draws the ILS fix marker (the actual capture target, off to one side),
+// a dashed hint curve showing the turn onto final, and the short final
+// approach band from the turn's rollout point to the threshold
 function drawGlideCorridors() {
   if (!cfg.glide) return;
   for (const rw of runways) {
     if (rw.kind !== 'strip') continue;
     for (const c of rw.corridors) {
-      const dx = c.farx - c.tx, dy = c.fary - c.ty;
+      const dx = c.tx - c.ix, dy = c.ty - c.iy;
       const len = Math.hypot(dx, dy);
       if (len < 1) continue;
       const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
       ctx.save();
-      // the band itself — shows the true capture width
+      // the final-approach band — shows the true capture width of the last leg
       ctx.globalAlpha = 0.16;
       ctx.fillStyle = rw.color;
       ctx.beginPath();
-      ctx.moveTo(c.tx + nx * GLIDE_HALFW, c.ty + ny * GLIDE_HALFW);
-      ctx.lineTo(c.farx + nx * GLIDE_HALFW, c.fary + ny * GLIDE_HALFW);
-      ctx.lineTo(c.farx - nx * GLIDE_HALFW, c.fary - ny * GLIDE_HALFW);
+      ctx.moveTo(c.ix + nx * GLIDE_HALFW, c.iy + ny * GLIDE_HALFW);
+      ctx.lineTo(c.tx + nx * GLIDE_HALFW, c.ty + ny * GLIDE_HALFW);
       ctx.lineTo(c.tx - nx * GLIDE_HALFW, c.ty - ny * GLIDE_HALFW);
+      ctx.lineTo(c.ix - nx * GLIDE_HALFW, c.iy - ny * GLIDE_HALFW);
       ctx.closePath();
       ctx.fill();
       // bright centerline
@@ -1470,25 +1489,49 @@ function drawGlideCorridors() {
       ctx.lineWidth = 2;
       ctx.setLineDash([10, 8]);
       ctx.beginPath();
-      ctx.moveTo(c.tx, c.ty);
-      ctx.lineTo(c.farx, c.fary);
+      ctx.moveTo(c.ix, c.iy);
+      ctx.lineTo(c.tx, c.ty);
       ctx.stroke();
       ctx.setLineDash([]);
-      // inbound chevrons pointing toward the runway threshold
+      // inbound chevron pointing toward the runway threshold
       ctx.globalAlpha = 0.7;
       ctx.fillStyle = rw.color;
-      const chevN = Math.max(2, Math.floor(len / 44));
-      for (let i = 1; i <= chevN; i++) {
-        const t = i / (chevN + 1);
-        ctx.save();
-        ctx.translate(c.farx - dx * t, c.fary - dy * t);
-        ctx.rotate(Math.atan2(-dy, -dx));
-        ctx.beginPath();
-        ctx.moveTo(7, 0); ctx.lineTo(-5, 5); ctx.lineTo(-5, -5);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
+      ctx.save();
+      ctx.translate((c.ix + c.tx) / 2, (c.iy + c.ty) / 2);
+      ctx.rotate(Math.atan2(dy, dx));
+      ctx.beginPath();
+      ctx.moveTo(7, 0); ctx.lineTo(-5, 5); ctx.lineTo(-5, -5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      // dashed hint curve — shows the turn the aircraft will fly from the
+      // fix onto final; NOT a capture zone, just a preview of the maneuver
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = rw.color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 6]);
+      ctx.beginPath();
+      ctx.moveTo(c.fix.x, c.fix.y);
+      ctx.quadraticCurveTo(c.bend.x, c.bend.y, c.ix, c.iy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // the ILS fix marker — a diamond with its capture radius shown faintly
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = rw.color;
+      const r = 7;
+      ctx.beginPath();
+      ctx.moveTo(c.fix.x, c.fix.y - r);
+      ctx.lineTo(c.fix.x + r, c.fix.y);
+      ctx.lineTo(c.fix.x, c.fix.y + r);
+      ctx.lineTo(c.fix.x - r, c.fix.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = rw.color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(c.fix.x, c.fix.y, FIX_R, 0, TAU);
+      ctx.stroke();
       ctx.restore();
     }
   }
