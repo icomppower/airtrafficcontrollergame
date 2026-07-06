@@ -565,9 +565,22 @@ function spawnPlane() {
 }
 
 function spawnInterval() {
-  let iv = 5.0 - totalLanded * 0.09 - elapsed * 0.004 - (stage - 1) * 0.4;
-  if (cfg.pace === 'relaxed') return Math.max(2.2, iv * 1.5 + 0.6);
-  return Math.max(1.15, iv);
+  if (cfg.pace === 'relaxed') {
+    const iv = 5.0 - totalLanded * 0.09 - elapsed * 0.004 - (stage - 1) * 0.4;
+    return Math.max(2.2, iv * 1.5 + 0.6);
+  }
+  if (cfg.pace === 'hell') {
+    // the original NORMAL ramp, kept intact and pushed further for players
+    // who explicitly want the old brutal endgame density
+    const iv = 5.0 - totalLanded * 0.09 - elapsed * 0.004 - (stage - 1) * 0.4 - 0.3;
+    return Math.max(0.9, iv);
+  }
+  // NORMAL: eased vs. the original ramp — player feedback that the old floor
+  // (1.15s, reached by ~landing #50) forced 0.25x game-speed + auto-avoid
+  // just to survive the back half of a long stage/run, rather than feeling
+  // like escalating-but-fair difficulty
+  const iv = 5.0 - totalLanded * 0.05 - elapsed * 0.0025 - (stage - 1) * 0.3;
+  return Math.max(1.6, iv);
 }
 
 function effSpeed(p) {
