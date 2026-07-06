@@ -651,6 +651,7 @@ function tryGlideCapture(p) {
         p.landing = { rw, kind: 'strip', t0, t1, len: Math.hypot(t1.x - t0.x, t1.y - t0.y) };
         popups.push({ x: pos.x, y: pos.y - 22, text: 'GLIDE CAPTURED ✓', age: 0 });
         SFX.confirm();
+        SFX.radioCall();
         firstTimeToast('glide', '🛬 Glide path captured — the aircraft auto-continues onto the runway.');
         return true;
       }
@@ -687,12 +688,14 @@ function maybeCloseRunway() {
   lastClosedRw = rw;
   banner = { text: `🚧 RUNWAY ${rw.num} CLOSED`, age: 0 };
   SFX.rush();
+  SFX.radioCall();
   firstTimeToast('closures', '🚧 A runway just closed — route traffic to another one until it reopens.');
 }
 
 function reopenRunway() {
   if (!closedRw) return;
   closureCooldown.set(closedRw, elapsed + rand(45, 80));
+  SFX.radioCall();
   closedRw.closed = false;
   popups.push({ x: closedRw.x, y: closedRw.y - 10, text: 'RUNWAY REOPENED', age: 0 });
   closedRw = null;
@@ -1052,6 +1055,7 @@ function update(dt) {
     burstT = 0;
     banner = { text: 'RUSH HOUR!', age: 0 };
     SFX.rush();
+    SFX.radioCall();
     firstTimeToast('rush', '🚨 Rush hour — several aircraft incoming at once. Stay ahead of the queue.');
   }
   if (burstLeft > 0) {
@@ -1805,6 +1809,7 @@ function endDrag() {
         active.followTarget = lead;
         popups.push({ x: active.x, y: active.y - 24, text: 'FOLLOWING ⟶', age: 0.3 });
         SFX.confirm();
+        SFX.radioCall();
         firstTimeToast('follow', '🔗 Sequenced — it will auto-follow and land right behind the lead aircraft.');
       }
     }

@@ -119,6 +119,7 @@ class SFXEngine {
 
   _chatter() {
     if (!this.ctx || this.muted || document.hidden) return;
+    this._lastChatterT = this.ctx.currentTime;
     const t = this.ctx.currentTime;
     this._beep(1500, t, 0.04, 0.025, 'square'); // squelch click
     const dur = 0.5 + Math.random() * 0.9;
@@ -141,6 +142,15 @@ class SFXEngine {
     g.gain.setValueAtTime(0, t + dur);
     src.start(t);
     src.stop(t + dur + 0.1);
+  }
+
+  // trigger a radio-chatter burst tied to a specific in-game event (glide
+  // capture, runway closure/reopen, rush hour, follow-behind sequencing),
+  // throttled so it can't pile up with the ambient random chatter
+  radioCall() {
+    if (!this.ctx || this.ctx.currentTime - (this._lastChatterT || -99) < 4) return;
+    this._chatter();
+    this._scheduleChatter(); // push the next ambient burst out so it doesn't double up
   }
 
   /* ---------- one-shots ---------- */
