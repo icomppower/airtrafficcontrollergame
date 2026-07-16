@@ -30,7 +30,7 @@ html, body {
 #hud {
   position: absolute; top: 0; left: 0; right: 0;
   display: flex; justify-content: space-between; align-items: flex-start;
-  padding: max(10px, env(safe-area-inset-top)) 12px 0;
+  padding: max(16px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left));
   pointer-events: none;
   z-index: 5;
 }
@@ -52,15 +52,15 @@ html, body {
 .chip .sep { width: 1px; height: 14px; background: rgba(255,255,255,.15); align-self: center; }
 .chip .lbl.practice { color: #8fe86e; }
 
-.btns { display: flex; gap: 8px; pointer-events: auto; }
+.btns { display: flex; gap: 12px; pointer-events: auto; }
 .btns button {
-  width: 42px; height: 42px;
+  width: 52px; height: 52px;
   border-radius: 50%;
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(18, 24, 34, .72);
   backdrop-filter: blur(6px);
   color: #fff;
-  font-size: 16px;
+  font-size: 20px;
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(0,0,0,.35);
   transition: transform .1s, background .15s;
@@ -69,9 +69,9 @@ html, body {
 .btns button:active { transform: scale(.92); }
 .btns button.txt {
   width: auto;
-  padding: 0 13px;
+  padding: 0 18px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 900;
   letter-spacing: .05em;
 }
@@ -97,9 +97,9 @@ html, body {
 .panel {
   text-align: center;
   color: #fff;
-  padding: 28px 34px;
+  padding: 34px 40px;
   max-width: 92vw;
-  max-height: 100vh;
+  max-height: 94vh;
   overflow-y: auto;
   animation: pop .45s cubic-bezier(.2,1.4,.4,1) both;
 }

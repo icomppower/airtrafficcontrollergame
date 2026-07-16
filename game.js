@@ -66,12 +66,12 @@ const AIRPORTS = {
     // six runways radiating from a shared hub, pinwheel-style — a stylized
     // visual reference, not a literal copy of the real airport's layout
     strips: [
-      { type: 'jet',  x: 0.650, y: 0.480, angle: 0,               lenF: 0.42, num: '16R' },
-      { type: 'prop', x: 0.558, y: 0.580, angle: Math.PI / 3,     lenF: 0.30, num: '8' },
-      { type: 'jet',  x: 0.425, y: 0.610, angle: 2 * Math.PI / 3, lenF: 0.42, num: '34L' },
-      { type: 'prop', x: 0.385, y: 0.480, angle: Math.PI,         lenF: 0.30, num: '16L' },
-      { type: 'jet',  x: 0.425, y: 0.350, angle: 4 * Math.PI / 3, lenF: 0.42, num: '26' },
-      { type: 'prop', x: 0.558, y: 0.380, angle: 5 * Math.PI / 3, lenF: 0.30, num: '34R' },
+      { type: 'jet',  x: 0.740, y: 0.480, angle: 0,               lenF: 0.34, num: '16R', sign: 1 },
+      { type: 'prop', x: 0.593, y: 0.640, angle: Math.PI / 3,     lenF: 0.24, num: '8',   sign: 1 },
+      { type: 'jet',  x: 0.380, y: 0.688, angle: 2 * Math.PI / 3, lenF: 0.34, num: '34L', sign: 1 },
+      { type: 'prop', x: 0.316, y: 0.480, angle: Math.PI,         lenF: 0.24, num: '16L', sign: 1 },
+      { type: 'jet',  x: 0.380, y: 0.272, angle: 4 * Math.PI / 3, lenF: 0.34, num: '26',  sign: 1 },
+      { type: 'prop', x: 0.593, y: 0.320, angle: 5 * Math.PI / 3, lenF: 0.24, num: '34R', sign: 1 },
     ],
     pad: { x: 0.50, y: 0.85 },
   },
@@ -183,9 +183,11 @@ function layoutAirport() {
       len: Math.min(s * st.lenF, 430),
       wid: st.type === 'jet' ? 36 : 27,
       num: st.num,
+      sign: st.sign,
     });
   }
   for (const rw of runways) {
+    if (rw.kind !== 'strip') continue;
     const dirx = Math.cos(rw.angle), diry = Math.sin(rw.angle);
     const corr = rw.len * 1.3; // a short final-approach stretch, not most of the map
     const buildCorridor = sign => {
@@ -215,7 +217,9 @@ function layoutAirport() {
     const margin = 20;
     const outOfBounds = c => Math.max(0, margin - c.fix.x, c.fix.x - (W - margin), margin - c.fix.y, c.fix.y - (H - margin));
     const candidates = [buildCorridor(-1), buildCorridor(1)];
-    rw.corridors = [candidates.sort((a, b) => outOfBounds(a) - outOfBounds(b))[0]];
+    rw.corridors = [(rw.sign !== undefined)
+      ? (candidates.find(c => c.sign === rw.sign) || candidates[0])
+      : candidates.sort((a, b) => outOfBounds(a) - outOfBounds(b))[0]];
   }
   runways.push({
     kind: 'pad', type: 'heli', color: COLORS.heli,
@@ -548,7 +552,7 @@ function spawnPlane() {
   else { x = rand(...hRange()); y = PLAY.b + m; }
 
   for (const p of planes) {
-    if (!p.done && Math.hypot(p.x - x, p.y - y) < 110) { spawnT = 0.6; return; }
+    if (!p.done && Math.hypot(p.x - x, p.y - y) < 180) { spawnT = 0.6; return; }
   }
 
   const tx = W * 0.5 + rand(-W * 0.22, W * 0.22);
@@ -2283,7 +2287,7 @@ function resize() {
   DPR = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.ceil(W * DPR);
   canvas.height = Math.ceil(H * DPR);
-  const pad = 8;
+  const pad = 20;
   PLAY = {
     l: safeInset('--sal') + pad, r: W - safeInset('--sar') - pad,
     t: safeInset('--sat') + pad, b: H - safeInset('--sab') - pad,
